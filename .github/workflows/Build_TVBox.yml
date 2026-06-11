@@ -24,20 +24,18 @@ jobs:
       - name: 全局配置官方Maven源
         run: |
           mkdir -p ~/.gradle
-          cat > ~/.gradle/init.gradle <<'EOF'
-allprojects {
-    buildscript {
-        repositories {
-            google()
-            mavenCentral()
-        }
-    }
-    repositories {
-        google()
-        mavenCentral()
-    }
-}
-EOF
+          echo "allprojects {" > ~/.gradle/init.gradle
+          echo "    buildscript {" >> ~/.gradle/init.gradle
+          echo "        repositories {" >> ~/.gradle/init.gradle
+          echo "            google()" >> ~/.gradle/init.gradle
+          echo "            mavenCentral()" >> ~/.gradle/init.gradle
+          echo "        }" >> ~/.gradle/init.gradle
+          echo "    }" >> ~/.gradle/init.gradle
+          echo "    repositories {" >> ~/.gradle/init.gradle
+          echo "        google()" >> ~/.gradle/init.gradle
+          echo "        mavenCentral()" >> ~/.gradle/init.gradle
+          echo "    }" >> ~/.gradle/init.gradle
+          echo "}" >> ~/.gradle/init.gradle
 
       - name: 赋予gradlew执行权限
         run: chmod +x gradlew

@@ -1,46 +1,47 @@
 name: Test Build
 
 on:
-  push:
-    branches:
-      - main
-  pull_request:
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      # 升级 checkout v4
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # 配置JDK，Gradle 7.5推荐JDK17
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
 
-      # 安装Android SDK，自动注入ANDROID_SDK_ROOT
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      # 关键：自动生成缺失的 local.properties
       - name: Generate local.properties
         run: echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
+
+      # ========== 新增：安装Python并配置Chaquopy ==========
+      - name: Install Python3 & set Chaquopy buildPython
+        run: |
+          sudo apt update && sudo apt install -y python3 python3-pip
+          echo "buildPython=$(which python3)" >> gradle.properties
+
+      # ========== 修复阿里云Maven 502 ==========
+      - name: Replace Aliyun Maven to Tsinghua mirror
+        run: |
+          sed -i 's|https://maven.aliyun.com/repository/central|https://mirrors.tuna.tsinghua.edu.cn/maven|g' build.gradle
 
       - name: Build With Gradle
         run: |
           chmod +x gradlew
-          # 修正任务名大小写 assembleRelease
           ./gradlew assembleRelease --build-cache --parallel --daemon --warning-mode all
 
       - name: Prepare App
         run: |
           mkdir -p ${{ github.workspace }}/apk/
-          # 只在项目构建目录查找APK，不要搜整个用户目录~
           find ${{ github.workspace }} -path "*/build/outputs/apk/*" -name "*.apk" -exec mv {} ${{ github.workspace }}/apk/ \;
 
       - name: Upload App To Artifact

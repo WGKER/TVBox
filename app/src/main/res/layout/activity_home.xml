@@ -48,8 +48,9 @@
             android:textSize="@dimen/ts_30"
             android:textStyle="bold" />
 
-        <ImageView
+            <ImageView
             android:id="@+id/tvWifi"
+            android:visibility="gone"
             android:layout_width="@dimen/vs_50"
             android:layout_height="@dimen/vs_50"
             android:layout_marginStart="@dimen/vs_15"
@@ -93,6 +94,7 @@
 
         <ImageView
             android:id="@+id/tvDrawer"
+            android:visibility="gone"
             android:layout_width="@dimen/vs_50"
             android:layout_height="@dimen/vs_50"
             android:layout_marginStart="@dimen/vs_15"

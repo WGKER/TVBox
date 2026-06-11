@@ -1,6 +1,6 @@
 name: Build TVBox armeabi-v7a Signed APK
 on:
-  workflow_dispatch
+  workflow_dispatch:
 
 jobs:
   build:
@@ -23,22 +23,22 @@ jobs:
         run: chmod +x gradlew
 
       - name: 编译armeabi-v7a Release
-        run: ./gradlew :app:assembleArmeabiV7aGenericNormalRelease -x :pyramid: --no-daemon
+        run: "./gradlew :app:assembleArmeabiV7aGenericNormalRelease -x :pyramid: --no-daemon"
 
       - name: 安装签名工具
         run: sudo apt update && sudo apt install android-sdk-build-tools -y
 
-      - name: 签名APK
+      - name: 自动生成测试密钥并签名APK
         run: |
           export PATH=$PATH:/usr/lib/android-sdk/build-tools/*/
           keytool -genkey -noprompt -alias testkey -dname "CN=test,OU=test,O=test,L=test,S=test,C=CN" -keystore temp.jks -storepass 123456 -keypass 123456 -keyalg RSA -validity 10000
-          APK=app/build/outputs/apk/armeabiV7aGenericNormal/release/app-armeabi-v7a-generic-normal-release-unsigned.apk
-          apksigner sign --ks temp.jks --ks-pass pass:123456 --key-pass pass:123456 $APK
-          mv $APK TVBox_armeabi-v7a_signed.apk
+          APK_FILE=app/build/outputs/apk/armeabiV7aGenericNormal/release/app-armeabi-v7a-generic-normal-release-unsigned.apk
+          apksigner sign --ks temp.jks --ks-pass pass:123456 --key-pass pass:123456 "$APK_FILE"
+          mv "$APK_FILE" TVBox_armeabi-v7a_signed.apk
 
-      - name: 上传成品APK
+      - name: 上传成品签名APK
         uses: actions/upload-artifact@v4
         with:
-          name: TVBox_armeabi-v7a_signed
+          name: TVBox_armeabi-v7a_signed_APK
           path: TVBox_armeabi-v7a_signed.apk
           retention-days: 30

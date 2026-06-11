@@ -25,19 +25,19 @@ jobs:
         run: |
           mkdir -p ~/.gradle
           cat > ~/.gradle/init.gradle <<'EOF'
-          allprojects {
-              buildscript {
-                  repositories {
-                      google()
-                      mavenCentral()
-                  }
-              }
-              repositories {
-                  google()
-                  mavenCentral()
-              }
-          }
-          EOF
+allprojects {
+    buildscript {
+        repositories {
+            google()
+            mavenCentral()
+        }
+    }
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+EOF
 
       - name: 赋予gradlew执行权限
         run: chmod +x gradlew
@@ -65,8 +65,7 @@ jobs:
           apksigner sign --ks temp.jks --ks-pass pass:123456 --key-pass pass:123456 "$APK_PATH"
 
       - name: 重命名成品APK
-        run: |
-          mv app/build/outputs/apk/armeabiV7aGenericNormal/release/app-armeabi-v7a-generic-normal-release-unsigned.apk TVBox_armeabi-v7a_signed.apk
+        run: mv app/build/outputs/apk/armeabiV7aGenericNormal/release/app-armeabi-v7a-generic-normal-release-unsigned.apk TVBox_armeabi-v7a_signed.apk
 
       - name: 上传签名成品APK
         uses: actions/upload-artifact@v4

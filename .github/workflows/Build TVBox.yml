@@ -16,19 +16,25 @@ jobs:
           distribution: 'temurin'
           cache: gradle
 
-      - name: 赋予gradlew权限
+      # 关键修复：主动生成空local.properties，规避pyramid模块找不到文件报错
+      - name: 生成local.properties
+        run: |
+          touch local.properties
+          echo "sdk.dir=$ANDROID_HOME" >> local.properties
+
+      - name: 赋予gradlew执行权限
         run: chmod +x gradlew
 
       - name: 编译未签名APK
         run: ./gradlew assembleRelease
 
-      - name: 安装Android build-tools 签名工具
+      - name: 安装Android build-tools签名工具
         run: |
           sudo apt update
           sudo apt install android-sdk-build-tools -y
           export PATH=$PATH:/usr/lib/android-sdk/build-tools/*/
 
-      # 自动生成测试临时密钥并签名，仅自用
+      # 自动生成测试临时密钥并签名APK
       - name: 临时生成密钥并签名APK
         run: |
           keytool -genkey -noprompt \

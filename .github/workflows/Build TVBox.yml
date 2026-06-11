@@ -42,8 +42,7 @@ jobs:
       - name: 赋予gradlew执行权限
         run: chmod +x gradlew
 
-      # 修正：-x :pyramid: 完整路径排除整个pyramid模块所有任务
-      - name: 编译armeabi-v7a Release
+      - name: 编译armeabi-v7a Release，排除pyramid全模块
         run: ./gradlew :app:assembleArmeabiV7aGenericNormalRelease -x :pyramid:
 
       - name: 安装签名工具
@@ -52,8 +51,7 @@ jobs:
           sudo apt install android-sdk-build-tools -y
           export PATH=$PATH:/usr/lib/android-sdk/build-tools/*/
 
-      # CI自动生成测试密钥签名
-      - name: 自动签名APK
+      - name: CI自动生成测试密钥并签名APK
         run: |
           keytool -genkey -noprompt \
             -alias testkey \
@@ -63,12 +61,14 @@ jobs:
             -keypass 123456 \
             -keyalg RSA \
             -validity 10000
-          apksigner sign --ks temp.jks --ks-pass pass:123456 --key-pass pass:123456 app/build/outputs/apk/armeabiV7aGenericNormal/release/app-armeabi-v7a-generic-normal-release-unsigned.apk
+          APK_PATH=app/build/outputs/apk/armeabiV7aGenericNormal/release/app-armeabi-v7a-generic-normal-release-unsigned.apk
+          apksigner sign --ks temp.jks --ks-pass pass:123456 --key-pass pass:123456 "$APK_PATH"
 
-      - name: 重命名成品包
-        run: mv app/build/outputs/apk/armeabiV7aGenericNormal/release/app-armeabi-v7a-generic-normal-release-unsigned.apk TVBox_armeabi-v7a_signed.apk
+      - name: 重命名成品APK
+        run: |
+          mv app/build/outputs/apk/armeabiV7aGenericNormal/release/app-armeabi-v7a-generic-normal-release-unsigned.apk TVBox_armeabi-v7a_signed.apk
 
-      - name: 上传签名APK
+      - name: 上传签名成品APK
         uses: actions/upload-artifact@v4
         with:
           name: TVBox_armeabi-v7a_签名成品APK

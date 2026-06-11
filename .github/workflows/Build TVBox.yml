@@ -9,23 +9,40 @@ jobs:
       - name: 检出源码
         uses: actions/checkout@v4
 
-      - name: 设置JDK17
+      - name: 设置JDK11（该老AGP适配更稳）
         uses: actions/setup-java@v4
         with:
-          java-version: '17'
+          java-version: '11'
           distribution: 'temurin'
           cache: gradle
 
-      # 关键修复：主动生成空local.properties，规避pyramid模块找不到文件报错
+      # 修复 pyramid模块缺失local.properties
       - name: 生成local.properties
         run: |
           touch local.properties
           echo "sdk.dir=$ANDROID_HOME" >> local.properties
 
+      # 重写全局gradle仓库源，换掉故障阿里云镜像
+      - name: 替换Gradle Maven仓库源
+        run: |
+          cat > init.gradle <<'EOF'
+          allprojects {
+              repositories {
+                  maven { url 'https://dl.google.com/dl/android/maven2/' }
+                  maven { url 'https://repo1.maven.org/maven2/' }
+                  maven { url 'https://maven.aliyun.com/repository/google' }
+                  maven { url 'https://maven.aliyun.com/repository/public' }
+                  google()
+                  mavenCentral()
+              }
+          }
+          EOF
+          echo "-I init.gradle" >> gradlew
+
       - name: 赋予gradlew执行权限
         run: chmod +x gradlew
 
-      - name: 编译未签名APK
+      - name: 编译Release未签名APK
         run: ./gradlew assembleRelease
 
       - name: 安装Android build-tools签名工具
@@ -34,7 +51,7 @@ jobs:
           sudo apt install android-sdk-build-tools -y
           export PATH=$PATH:/usr/lib/android-sdk/build-tools/*/
 
-      # 自动生成测试临时密钥并签名APK
+      # CI自动生成测试密钥并签名，无需自备jks
       - name: 临时生成密钥并签名APK
         run: |
           keytool -genkey -noprompt \
@@ -47,10 +64,10 @@ jobs:
             -validity 10000
           apksigner sign --ks temp.jks --ks-pass pass:123456 --key-pass pass:123456 app/build/outputs/apk/release/app-release-unsigned.apk
 
-      - name: 重命名已签名包
+      - name: 重命名已签名安装包
         run: mv app/build/outputs/apk/release/app-release-unsigned.apk app/build/outputs/apk/release/TVBox_signed.apk
 
-      - name: 上传签名后的APK
+      - name: 上传成品签名APK
         uses: actions/upload-artifact@v4
         with:
           name: TVBox_Temp_Signed_APK

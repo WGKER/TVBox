@@ -6,68 +6,39 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: 检出源码
-        uses: actions/checkout@v4
+    - name: 检出源码
+      uses: actions/checkout@v4
 
-      - name: 设置JDK17
-        uses: actions/setup-java@v4
-        with:
-          java-version: '17'
-          distribution: 'temurin'
-          cache: gradle
+    - name: 设置JDK17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+        cache: gradle
 
-      - name: 生成local.properties
-        run: |
-          touch local.properties
-          echo "sdk.dir=$ANDROID_HOME" >> local.properties
+    - name: 生成local.properties
+      run: touch local.properties && echo "sdk.dir=$ANDROID_HOME" >> local.properties
 
-      - name: 全局配置官方Maven源
-        run: |
-          mkdir -p ~/.gradle
-          echo "allprojects {" > ~/.gradle/init.gradle
-          echo "    buildscript {" >> ~/.gradle/init.gradle
-          echo "        repositories {" >> ~/.gradle/init.gradle
-          echo "            google()" >> ~/.gradle/init.gradle
-          echo "            mavenCentral()" >> ~/.gradle/init.gradle
-          echo "        }" >> ~/.gradle/init.gradle
-          echo "    }" >> ~/.gradle/init.gradle
-          echo "    repositories {" >> ~/.gradle/init.gradle
-          echo "        google()" >> ~/.gradle/init.gradle
-          echo "        mavenCentral()" >> ~/.gradle/init.gradle
-          echo "    }" >> ~/.gradle/init.gradle
-          echo "}" >> ~/.gradle/init.gradle
+    - name: 赋予gradlew执行权限
+      run: chmod +x gradlew
 
-      - name: 赋予gradlew执行权限
-        run: chmod +x gradlew
+    - name: 编译armeabi-v7a Release
+      run: ./gradlew :app:assembleArmeabiV7aGenericNormalRelease -x :pyramid: --no-daemon
 
-      - name: 编译armeabi-v7a Release，排除pyramid全模块
-        run: ./gradlew :app:assembleArmeabiV7aGenericNormalRelease -x :pyramid:
+    - name: 安装签名工具
+      run: sudo apt update && sudo apt install android-sdk-build-tools -y
 
-      - name: 安装签名工具
-        run: |
-          sudo apt update
-          sudo apt install android-sdk-build-tools -y
-          export PATH=$PATH:/usr/lib/android-sdk/build-tools/*/
+    - name: 自动生成密钥并签名
+      run: |
+        export PATH=$PATH:/usr/lib/android-sdk/build-tools/*/
+        keytool -genkey -noprompt -alias testkey -dname "CN=test,OU=test,O=test,L=test,S=test,C=CN" -keystore temp.jks -storepass 123456 -keypass 123456 -keyalg RSA -validity 10000
+        APK=app/build/outputs/apk/armeabiV7aGenericNormal/release/app-armeabi-v7a-generic-normal-release-unsigned.apk
+        apksigner sign --ks temp.jks --ks-pass pass:123456 --key-pass pass:123456 $APK
+        mv $APK TVBox_armeabi-v7a_signed.apk
 
-      - name: CI自动生成测试密钥并签名APK
-        run: |
-          keytool -genkey -noprompt \
-            -alias testkey \
-            -dname "CN=test, OU=test, O=test, L=test, S=test, C=CN" \
-            -keystore temp.jks \
-            -storepass 123456 \
-            -keypass 123456 \
-            -keyalg RSA \
-            -validity 10000
-          APK_PATH=app/build/outputs/apk/armeabiV7aGenericNormal/release/app-armeabi-v7a-generic-normal-release-unsigned.apk
-          apksigner sign --ks temp.jks --ks-pass pass:123456 --key-pass pass:123456 "$APK_PATH"
-
-      - name: 重命名成品APK
-        run: mv app/build/outputs/apk/armeabiV7aGenericNormal/release/app-armeabi-v7a-generic-normal-release-unsigned.apk TVBox_armeabi-v7a_signed.apk
-
-      - name: 上传签名成品APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: TVBox_armeabi-v7a_签名成品APK
-          path: TVBox_armeabi-v7a_signed.apk
-          retention-days: 30
+    - name: 上传APK
+      uses: actions/upload-artifact@v4
+      with:
+        name: TVBox_armeabi-v7a_signed
+        path: TVBox_armeabi-v7a_signed.apk
+        retention-days: 30

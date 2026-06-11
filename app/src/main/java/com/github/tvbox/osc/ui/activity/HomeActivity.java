@@ -393,6 +393,9 @@ public class HomeActivity extends BaseActivity {
                     return;
                 }
                 showSuccess();
+                // 【修复】无条件停止闪烁，不受站点名显示开关控制
+                tvName.clearAnimation();
+
                 if (absXml != null && absXml.classes != null && absXml.classes.sortList != null) {
                     sortAdapter.setNewData(DefaultConfig.adjustSort(ApiConfig.get().getHomeSourceBean().getKey(), absXml.classes.sortList, true));
                 } else {
@@ -402,8 +405,9 @@ public class HomeActivity extends BaseActivity {
                 // takagen99 : Switch to show / hide source title
                 SourceBean home = ApiConfig.get().getHomeSourceBean();
                 if (HomeShow) {
-                    if (home != null && home.getName() != null && !home.getName().isEmpty()) tvName.setText(home.getName());
-                        tvName.clearAnimation();
+                    if (home != null && home.getName() != null && !home.getName().isEmpty()) {
+                        tvName.setText(home.getName());
+                    }
                 }
             }
         });
@@ -488,6 +492,7 @@ public class HomeActivity extends BaseActivity {
                         mHandler.postDelayed(new Runnable() {
                             @Override
                             public void run() {
+                                tvName.clearAnimation(); // 异常兜底停止闪烁
                                 if ("".equals(msg))
                                     Toast.makeText(HomeActivity.this, getString(R.string.hm_notok), Toast.LENGTH_SHORT).show();
                                 else
@@ -535,6 +540,7 @@ public class HomeActivity extends BaseActivity {
                         public void run() {
                             dataInitOk = true;
                             jarInitOk = true;
+                            tvName.clearAnimation(); // 异常兜底停止闪烁
                             initData();
                         }
                     });

@@ -38,8 +38,9 @@ jobs:
       - name: 赋予gradlew执行权限
         run: chmod +x gradlew
 
+      # 修复：-x :pyramid 去掉末尾多余冒号
       - name: 编译armeabi-v7a Release
-        run: "./gradlew :app:assembleArmeabiV7aGenericNormalRelease -x :pyramid: --no-daemon"
+        run: "./gradlew :app:assembleArmeabiV7aGenericNormalRelease -x :pyramid --no-daemon"
 
       - name: 安装签名工具
         run: sudo apt update && sudo apt install android-sdk-build-tools -y

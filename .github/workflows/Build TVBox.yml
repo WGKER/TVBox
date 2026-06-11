@@ -1,4 +1,4 @@
-name: Build TVBox Temp Signed APK
+name: Build TVBox armeabi-v7a Signed APK
 on:
   workflow_dispatch:
 
@@ -9,10 +9,10 @@ jobs:
       - name: 检出源码
         uses: actions/checkout@v4
 
-      - name: 设置JDK11
+      - name: 设置JDK17
         uses: actions/setup-java@v4
         with:
-          java-version: '11'
+          java-version: '17'
           distribution: 'temurin'
           cache: gradle
 
@@ -21,8 +21,7 @@ jobs:
           touch local.properties
           echo "sdk.dir=$ANDROID_HOME" >> local.properties
 
-      # 全局强制使用官方源，彻底抛弃故障阿里云镜像
-      - name: 全局Gradle仓库重定向
+      - name: 全局配置官方Maven源
         run: |
           mkdir -p ~/.gradle
           cat > ~/.gradle/init.gradle <<'EOF'
@@ -43,18 +42,18 @@ jobs:
       - name: 赋予gradlew执行权限
         run: chmod +x gradlew
 
-      # 只编译app模块，跳过pyramid Python相关任务
-      - name: 编译Release APK
-        run: ./gradlew :app:assembleRelease -x :pyramid:generateArm64ReleasePythonRequirements
+      # 仅编译 armeabi-v7a generic normal 正式包，整体排除pyramid模块
+      - name: 编译armeabi-v7a Release
+        run: ./gradlew :app:assembleArmeabiV7aGenericNormalRelease -x pyramid
 
-      - name: 安装Android签名工具
+      - name: 安装签名工具
         run: |
           sudo apt update
           sudo apt install android-sdk-build-tools -y
           export PATH=$PATH:/usr/lib/android-sdk/build-tools/*/
 
-      # CI内自动生成测试签名，无需自备jks密钥
-      - name: 临时密钥自动签名APK
+      # CI自动生成测试密钥签名
+      - name: 自动签名APK
         run: |
           keytool -genkey -noprompt \
             -alias testkey \
@@ -64,14 +63,14 @@ jobs:
             -keypass 123456 \
             -keyalg RSA \
             -validity 10000
-          apksigner sign --ks temp.jks --ks-pass pass:123456 --key-pass pass:123456 app/build/outputs/apk/release/app-release-unsigned.apk
+          apksigner sign --ks temp.jks --ks-pass pass:123456 --key-pass pass:123456 app/build/outputs/apk/armeabiV7aGenericNormal/release/app-armeabi-v7a-generic-normal-release-unsigned.apk
 
-      - name: 重命名已签名安装包
-        run: mv app/build/outputs/apk/release/app-release-unsigned.apk app/build/outputs/apk/release/TVBox_signed.apk
+      - name: 重命名成品包
+        run: mv app/build/outputs/apk/armeabiV7aGenericNormal/release/app-armeabi-v7a-generic-normal-release-unsigned.apk TVBox_armeabi-v7a_signed.apk
 
-      - name: 上传成品APK
+      - name: 上传签名APK
         uses: actions/upload-artifact@v4
         with:
-          name: TVBox_Signed_APK_NoPython
-          path: app/build/outputs/apk/release/TVBox_signed.apk
+          name: TVBox_armeabi-v7a_签名成品APK
+          path: TVBox_armeabi-v7a_signed.apk
           retention-days: 30

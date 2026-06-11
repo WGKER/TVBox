@@ -19,7 +19,7 @@ jobs:
       - name: 生成local.properties
         run: touch local.properties && echo "sdk.dir=$ANDROID_HOME" >> local.properties
 
-      - name: 全局强制替换Gradle仓库，屏蔽阿里云
+      - name: 全局强制官方Maven源，屏蔽阿里云
         run: |
           mkdir -p ~/.gradle
           echo "allprojects {" > ~/.gradle/init.gradle
@@ -38,9 +38,9 @@ jobs:
       - name: 赋予gradlew执行权限
         run: chmod +x gradlew
 
-      # 修复：-x :pyramid 去掉末尾多余冒号
-      - name: 编译armeabi-v7a Release
-        run: "./gradlew :app:assembleArmeabiV7aGenericNormalRelease -x :pyramid --no-daemon"
+      # 只执行app模块打包，不触发根项目全部子模块，不再处理pyramid
+      - name: 仅编译app模块 armeabi-v7a Release
+        run: "./gradlew app:assembleArmeabiV7aGenericNormalRelease --no-daemon"
 
       - name: 安装签名工具
         run: sudo apt update && sudo apt install android-sdk-build-tools -y

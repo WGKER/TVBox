@@ -21,35 +21,40 @@ jobs:
           touch local.properties
           echo "sdk.dir=$ANDROID_HOME" >> local.properties
 
-      - name: 替换Maven源，规避阿里云502
+      # 全局强制使用官方源，彻底抛弃故障阿里云镜像
+      - name: 全局Gradle仓库重定向
         run: |
-          cat > init.gradle <<'EOF'
+          mkdir -p ~/.gradle
+          cat > ~/.gradle/init.gradle <<'EOF'
           allprojects {
+              buildscript {
+                  repositories {
+                      google()
+                      mavenCentral()
+                  }
+              }
               repositories {
-                  maven { url 'https://dl.google.com/dl/android/maven2/' }
-                  maven { url 'https://repo1.maven.org/maven2/' }
                   google()
                   mavenCentral()
               }
           }
           EOF
-          echo "-I init.gradle" >> gradlew
 
       - name: 赋予gradlew执行权限
         run: chmod +x gradlew
 
-      # 关键改动：排除pyramid模块，只编译app，不再执行Python相关任务
-      - name: 编译Release APK（跳过pyramid）
+      # 只编译app模块，跳过pyramid Python相关任务
+      - name: 编译Release APK
         run: ./gradlew :app:assembleRelease -x :pyramid:generateArm64ReleasePythonRequirements
 
-      - name: 安装签名工具
+      - name: 安装Android签名工具
         run: |
           sudo apt update
           sudo apt install android-sdk-build-tools -y
           export PATH=$PATH:/usr/lib/android-sdk/build-tools/*/
 
-      # CI自动生成测试签名
-      - name: 临时生成密钥签名APK
+      # CI内自动生成测试签名，无需自备jks密钥
+      - name: 临时密钥自动签名APK
         run: |
           keytool -genkey -noprompt \
             -alias testkey \
@@ -61,10 +66,10 @@ jobs:
             -validity 10000
           apksigner sign --ks temp.jks --ks-pass pass:123456 --key-pass pass:123456 app/build/outputs/apk/release/app-release-unsigned.apk
 
-      - name: 重命名成品包
+      - name: 重命名已签名安装包
         run: mv app/build/outputs/apk/release/app-release-unsigned.apk app/build/outputs/apk/release/TVBox_signed.apk
 
-      - name: 上传APK
+      - name: 上传成品APK
         uses: actions/upload-artifact@v4
         with:
           name: TVBox_Signed_APK_NoPython

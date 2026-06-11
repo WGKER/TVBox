@@ -1,4 +1,4 @@
-name: Build TVBox armeabi Release Signed APK 333
+name: Build TVBox armeabi Release Signed APK
 on:
   workflow_dispatch:
 
@@ -41,13 +41,21 @@ jobs:
       - name: 编译armeabi Release
         run: "./gradlew :app:assembleArmeabiGenericNormalRelease --no-daemon"
 
-      - name: 安装签名工具
-        run: sudo apt update && sudo apt install android-sdk-build-tools -y
+      - name: 安装Android构建工具 + zipalign
+        run: sudo apt update && sudo apt install android-sdk-build-tools zipalign -y
 
-      - name: CI生成测试证书并重新签名APK
+      - name: 标准重签名流程（对齐+清旧签名+v2+v3签名）
         run: |
           export PATH=$PATH:/usr/lib/android-sdk/build-tools/*/
-          # 生成临时签名密钥
+          # 固定你的真实APK路径
+          RAW_APK=app/build/outputs/apk/armeabiGenericNormal/release/TVBox_release-armeabi-generic-java.apk
+          TMP_ALIGNED=aligned.apk
+          FINAL_APK=TVBox_armeabi_installable.apk
+
+          # 1. zipalign字节对齐（安卓强制要求）
+          zipalign -f 4 "$RAW_APK" "$TMP_ALIGNED"
+
+          # 2. 生成测试密钥
           keytool -genkey -noprompt \
             -alias testkey \
             -dname "CN=test,OU=test,O=test,L=test,S=test,C=CN" \
@@ -56,16 +64,22 @@ jobs:
             -keypass 123456 \
             -keyalg RSA \
             -validity 10000
-          # 固定你日志里真实APK完整路径
-          APK_FILE=app/build/outputs/apk/armeabiGenericNormal/release/TVBox_release-armeabi-generic-java.apk
-          # 重新签名覆盖原有签名
-          apksigner sign --ks temp.jks --ks-pass pass:123456 --key-pass pass:123456 "$APK_FILE"
-          # 重命名输出
-          mv "$APK_FILE" TVBox_armeabi_final_signed.apk
 
-      - name: 上传已签名成品APK
+          # 3. v2+v3同时签名，兼容新旧电视/安卓系统
+          apksigner sign \
+            --ks temp.jks \
+            --ks-pass pass:123456 \
+            --key-pass pass:123456 \
+            --v2-signing-enabled true \
+            --v3-signing-enabled true \
+            --out "$FINAL_APK" \
+            "$TMP_ALIGNED"
+
+          rm -f "$TMP_ALIGNED"
+
+      - name: 上传最终可安装签名APK
         uses: actions/upload-artifact@v4
         with:
-          name: TVBox_armeabi_已签名可直接安装
-          path: TVBox_armeabi_final_signed.apk
+          name: TVBox_armeabi_完整签名可直接安装
+          path: TVBox_armeabi_installable.apk
           retention-days: 30

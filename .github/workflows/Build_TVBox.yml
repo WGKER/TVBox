@@ -38,38 +38,25 @@ jobs:
       - name: 赋予gradlew执行权限
         run: chmod +x gradlew
 
+      # 使用系统提示存在的正确task名称
       - name: 编译armeabi Release
         run: "./gradlew :app:assembleArmeabiGenericNormalRelease --no-daemon"
 
-      # 打印目录，确认真实apk路径
-      - name: 查看编译输出目录
-        run: find app/build/outputs/apk -type f -name "*.apk"
-
       - name: 安装签名工具
-        run: |
-          sudo apt update
-          sudo apt install android-sdk-build-tools -y
-          export PATH=$PATH:/usr/lib/android-sdk/build-tools/*/
+        run: sudo apt update && sudo apt install android-sdk-build-tools -y
 
-      - name: 自动生成密钥并批量签名所有未签名APK
+      - name: 自动生成测试密钥并签名APK
         run: |
           export PATH=$PATH:/usr/lib/android-sdk/build-tools/*/
-          keytool -genkey -noprompt \
-            -alias testkey \
-            -dname "CN=test,OU=test,O=test,L=test,S=test,C=CN" \
-            -keystore temp.jks \
-            -storepass 123456 \
-            -keypass 123456 \
-            -keyalg RSA \
-            -validity 10000
-          # 自动匹配unsigned apk
-          APK=$(find app/build/outputs/apk -name "*unsigned.apk" | head -1)
-          if [ -z "$APK" ]; then
-            echo "未找到未签名APK"
+          keytool -genkey -noprompt -alias testkey -dname "CN=test,OU=test,O=test,L=test,S=test,C=CN" -keystore temp.jks -storepass 123456 -keypass 123456 -keyalg RSA -validity 10000
+          # 自动查找编译产出的未签名apk，不再手写固定路径
+          APK_FILE=$(find app/build/outputs/apk -name "*unsigned.apk" | head -n1)
+          if [ ! -f "$APK_FILE" ]; then
+            echo "错误：未找到编译输出的unsigned.apk"
             exit 1
           fi
-          apksigner sign --ks temp.jks --ks-pass pass:123456 --key-pass pass:123456 "$APK"
-          mv "$APK" TVBox_armeabi_signed.apk
+          apksigner sign --ks temp.jks --ks-pass pass:123456 --key-pass pass:123456 "$APK_FILE"
+          mv "$APK_FILE" TVBox_armeabi_signed.apk
 
       - name: 上传成品签名APK
         uses: actions/upload-artifact@v4

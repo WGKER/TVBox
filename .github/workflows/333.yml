@@ -1,0 +1,71 @@
+name: Build TVBox armeabi Release Signed APK 333
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@v4
+
+      - name: 设置JDK17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: 生成local.properties
+        run: touch local.properties && echo "sdk.dir=$ANDROID_HOME" >> local.properties
+
+      - name: 全局强制官方Maven源，屏蔽阿里云
+        run: |
+          mkdir -p ~/.gradle
+          echo "allprojects {" > ~/.gradle/init.gradle
+          echo "buildscript {" >> ~/.gradle/init.gradle
+          echo "repositories {" >> ~/.gradle/init.gradle
+          echo "google()" >> ~/.gradle/init.gradle
+          echo "mavenCentral()" >> ~/.gradle/init.gradle
+          echo "}" >> ~/.gradle/init.gradle
+          echo "}" >> ~/.gradle/init.gradle
+          echo "repositories {" >> ~/.gradle/init.gradle
+          echo "google()" >> ~/.gradle/init.gradle
+          echo "mavenCentral()" >> ~/.gradle/init.gradle
+          echo "}" >> ~/.gradle/init.gradle
+          echo "}" >> ~/.gradle/init.gradle
+
+      - name: 赋予gradlew执行权限
+        run: chmod +x gradlew
+
+      - name: 编译armeabi Release
+        run: "./gradlew :app:assembleArmeabiGenericNormalRelease --no-daemon"
+
+      - name: 安装签名工具
+        run: sudo apt update && sudo apt install android-sdk-build-tools -y
+
+      - name: CI生成测试证书并重新签名APK
+        run: |
+          export PATH=$PATH:/usr/lib/android-sdk/build-tools/*/
+          # 生成临时签名密钥
+          keytool -genkey -noprompt \
+            -alias testkey \
+            -dname "CN=test,OU=test,O=test,L=test,S=test,C=CN" \
+            -keystore temp.jks \
+            -storepass 123456 \
+            -keypass 123456 \
+            -keyalg RSA \
+            -validity 10000
+          # 固定你日志里真实APK完整路径
+          APK_FILE=app/build/outputs/apk/armeabiGenericNormal/release/TVBox_release-armeabi-generic-java.apk
+          # 重新签名覆盖原有签名
+          apksigner sign --ks temp.jks --ks-pass pass:123456 --key-pass pass:123456 "$APK_FILE"
+          # 重命名输出
+          mv "$APK_FILE" TVBox_armeabi_final_signed.apk
+
+      - name: 上传已签名成品APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: TVBox_armeabi_已签名可直接安装
+          path: TVBox_armeabi_final_signed.apk
+          retention-days: 30

@@ -1043,7 +1043,11 @@ public class PlayFragment extends BaseLazyFragment {
     private void checkDanmu(String danmu) {
         danmuText = danmu;
         mDanmuView.release();
-        mDanmuView.setVisibility(TextUtils.isEmpty(danmuText) || !HawkUtils.getDanmuOpen() ? View.GONE : View.VISIBLE);
+		// 强制弹幕View隐藏，无视HawkUtils.getDanmuOpen()的保存状态
+        mDanmuView.setVisibility(View.GONE);
+		// 直接return，不去加载弹幕
+		return;
+		/*
         if (TextUtils.isEmpty(danmuText)
                 || !HawkUtils.getDanmuOpen()
                 || (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && mActivity.isInPictureInPictureMode())) return;
@@ -1051,6 +1055,7 @@ public class PlayFragment extends BaseLazyFragment {
             mController.setHasDanmu(true);
             setDanmuViewSettings(true);
         }
+		*/
     }
 
     public void setData(Bundle bundle) {

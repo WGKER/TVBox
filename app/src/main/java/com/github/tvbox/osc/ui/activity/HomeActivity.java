@@ -133,11 +133,19 @@ public class HomeActivity extends BaseActivity {
     }
 
     boolean useCacheConfig = false;
+    // 进程级标记：本次APP启动已自动清过缓存，避免reloadHome死循环
+    private static boolean autoCacheCleared = false;
 
     @Override
     protected void init() {
         // takagen99: Added to allow read string
         res = getResources();
+
+        // 每次打开APP都先删系统缓存目录（轻量，不依赖ApiConfig）
+        File dir = getCacheDir();
+        FileUtils.recursiveDelete(dir);
+        dir = getExternalCacheDir();
+        FileUtils.recursiveDelete(dir);
 
         EventBus.getDefault().register(this);
         ControlManager.get().startServer();
@@ -371,7 +379,7 @@ public class HomeActivity extends BaseActivity {
         homeRec++;
         Hawk.put(HawkConfig.HOME_REC, homeRec);
     }
-    
+
     public static boolean reHome(Context appContext) {
         Intent intent = new Intent(appContext, HomeActivity.class);
         intent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK);
@@ -382,7 +390,7 @@ public class HomeActivity extends BaseActivity {
         return true;
     }
 
-    private boolean skipNextUpdate = false;	
+    private boolean skipNextUpdate = false;
     private void initViewModel() {
         sourceViewModel = new ViewModelProvider(this).get(SourceViewModel.class);
         sourceViewModel.sortResult.observe(this, new Observer<AbsSortXml>() {
@@ -450,37 +458,35 @@ public class HomeActivity extends BaseActivity {
         mGridView.requestFocus();
 
         if (dataInitOk && jarInitOk) {
-            // ========== 新增兜底：源为空直接跳转设置 ==========
-            if(ApiConfig.get().getHomeSourceBean() == null){
+            // ===== 兜底：源为空直接跳转设置添加订阅 =====
+            if (ApiConfig.get().getHomeSourceBean() == null) {
                 Toast.makeText(HomeActivity.this, "暂无源，请前往设置添加订阅", Toast.LENGTH_SHORT).show();
                 jumpActivity(SettingActivity.class);
                 return;
             }
-            // ========== 冷启动自动清缓存逻辑 ==========
-            if (!useCacheConfig) {
-                File dir = getCacheDir();
-                FileUtils.recursiveDelete(dir);
-                dir = getExternalCacheDir();
-                FileUtils.recursiveDelete(dir);
-                String cspCachePath = FileUtils.getFilePath()+"/csp/";
-                String jar=ApiConfig.get().getHomeSourceBean().getJar();
-                String jarUrl=!jar.isEmpty()?jar:ApiConfig.get().getSpider();
-                File cspCacheDir = new File(cspCachePath + MD5.string2MD5(jarUrl)+".jar");
-                if (!cspCacheDir.exists()){
-                    runOnUiThread(this::reloadHome);
+            // ===== 自动清csp jar缓存（进程内只执行一次，等同点击TVBox标题）=====
+            if (!autoCacheCleared) {
+                autoCacheCleared = true;
+                String cspCachePath = FileUtils.getFilePath() + "/csp/";
+                String jar = ApiConfig.get().getHomeSourceBean().getJar();
+                String jarUrl = !jar.isEmpty() ? jar : ApiConfig.get().getSpider();
+                File cspCacheDir = new File(cspCachePath + MD5.string2MD5(jarUrl) + ".jar");
+                if (!cspCacheDir.exists()) {
+                    reloadHome();
                     return;
                 }
                 new Thread(() -> {
                     try {
                         FileUtils.deleteFile(cspCacheDir);
                         ApiConfig.get().clearJarLoader();
-                        runOnUiThread(this::reloadHome);
+                        runOnUiThread(() -> reloadHome());
                     } catch (Exception e) {
                         e.printStackTrace();
                     }
                 }).start();
                 return;
             }
+            // ===== 自动清csp jar缓存结束 =====
             sourceViewModel.getSort(ApiConfig.get().getHomeSourceBean().getKey());
             if (hasPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)) {
                 LOG.e("有");
@@ -489,7 +495,7 @@ public class HomeActivity extends BaseActivity {
             }
             if (Hawk.get(HawkConfig.HOME_DEFAULT_SHOW, false)) {
                 jumpActivity(LivePlayActivity.class);
-            }         
+            }
             return;
         }
         tvNameAnimation();
@@ -571,7 +577,7 @@ public class HomeActivity extends BaseActivity {
                         public void run() {
                             dataInitOk = true;
                             jarInitOk = true;
-                            tvName.clearAnimation();
+                            tvName.clearAnimation(); // 异常兜底停止闪烁
                             initData();
                         }
                     });
@@ -907,6 +913,7 @@ public class HomeActivity extends BaseActivity {
                 public boolean areItemsTheSame(@NonNull @NotNull SourceBean oldItem, @NonNull @NotNull SourceBean newItem) {
                     return oldItem == newItem;
                 }
+
                 @Override
                 public boolean areContentsTheSame(@NonNull @NotNull SourceBean oldItem, @NonNull @NotNull SourceBean newItem) {
                     return oldItem.getKey().equals(newItem.getKey());

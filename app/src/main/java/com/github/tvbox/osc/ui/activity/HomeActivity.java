@@ -371,7 +371,7 @@ public class HomeActivity extends BaseActivity {
         homeRec++;
         Hawk.put(HawkConfig.HOME_REC, homeRec);
     }
-    
+
     public static boolean reHome(Context appContext) {
         Intent intent = new Intent(appContext, HomeActivity.class);
         intent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK);
@@ -382,7 +382,7 @@ public class HomeActivity extends BaseActivity {
         return true;
     }
 
-    private boolean skipNextUpdate = false;	
+    private boolean skipNextUpdate = false;
     private void initViewModel() {
         sourceViewModel = new ViewModelProvider(this).get(SourceViewModel.class);
         sourceViewModel.sortResult.observe(this, new Observer<AbsSortXml>() {
@@ -450,6 +450,32 @@ public class HomeActivity extends BaseActivity {
         mGridView.requestFocus();
 
         if (dataInitOk && jarInitOk) {
+            // ===== 自动清除缓存（仅冷启动首次执行，等同点击TVBox标题）=====
+            if (!useCacheConfig) {
+                File dir = getCacheDir();
+                FileUtils.recursiveDelete(dir);
+                dir = getExternalCacheDir();
+                FileUtils.recursiveDelete(dir);
+                String cspCachePath = FileUtils.getFilePath() + "/csp/";
+                String jar = ApiConfig.get().getHomeSourceBean().getJar();
+                String jarUrl = !jar.isEmpty() ? jar : ApiConfig.get().getSpider();
+                File cspCacheDir = new File(cspCachePath + MD5.string2MD5(jarUrl) + ".jar");
+                if (!cspCacheDir.exists()) {
+                    reloadHome();
+                    return;
+                }
+                new Thread(() -> {
+                    try {
+                        FileUtils.deleteFile(cspCacheDir);
+                        ApiConfig.get().clearJarLoader();
+                        runOnUiThread(() -> reloadHome());
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    }
+                }).start();
+                return;
+            }
+            // ===== 自动清除缓存结束 =====
             sourceViewModel.getSort(ApiConfig.get().getHomeSourceBean().getKey());
             if (hasPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)) {
                 LOG.e("有");
@@ -458,7 +484,7 @@ public class HomeActivity extends BaseActivity {
             }
             if (Hawk.get(HawkConfig.HOME_DEFAULT_SHOW, false)) {
                 jumpActivity(LivePlayActivity.class);
-            }         
+            }
             return;
         }
         tvNameAnimation();

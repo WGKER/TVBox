@@ -146,7 +146,7 @@ public class ApiConfig {
     File cache = new File(App.getInstance().getFilesDir().getAbsolutePath() + "/" + MD5.encode(apiUrl));
     final String finalApiUrl = apiUrl;
 
-    // ========== 第一步：优先读取本地缓存，立刻回调首页渲染（和FongMi对齐） ==========
+    // ========== 第一步：优先读取本地缓存，立刻回调首页渲染 ==========
     boolean cacheAvailable = false;
     if (cache.exists()) {
         try {
@@ -157,12 +157,9 @@ public class ApiConfig {
             th.printStackTrace();
         }
     }
-    // 如果连缓存都没有，先报错，再尝试网络拉取
-    if (!cacheAvailable) {
-        callback.retry();
-    }
 
     // ========== 第二步：后台异步拉取远端最新配置，不阻塞首页 ==========
+    final boolean hasCache = cacheAvailable;
     new Thread(() -> {
         String TempKey = null, configUrl = "", pk = ";pk;";
         if (finalApiUrl.contains(pk)) {
@@ -207,17 +204,26 @@ public class ApiConfig {
                             } catch (Throwable th) {
                                 th.printStackTrace();
                             }
-                            // 远端更新成功，通知首页刷新一次
-                            activity.runOnUiThread(callback::success);
+                            // 远端更新成功，通知首页刷新
+                            activity.runOnUiThread(() -> callback.success());
                         } catch (Throwable th) {
                             th.printStackTrace();
+                            if (!hasCache) {
+                                activity.runOnUiThread(() -> callback.error("解析配置失败"));
+                            }
                         }
                     }
 
                     @Override
                     public void onError(Response<String> response) {
                         super.onError(response);
-                        // 网络失败静默放弃，不弹窗打扰用户（已经有缓存显示了）
+                        // 有缓存：静默失败，不打扰用户
+                        // 无缓存：才报错提示
+                        if (!hasCache) {
+                            activity.runOnUiThread(() ->
+                                callback.error("拉取配置失败\n" + (response.getException() != null ? response.getException().getMessage() : ""))
+                            );
+                        }
                     }
 
                     public String convertResponse(okhttp3.Response response) throws Throwable {

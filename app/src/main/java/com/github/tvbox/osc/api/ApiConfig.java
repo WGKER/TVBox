@@ -47,6 +47,8 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
+import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -56,6 +58,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import com.github.tvbox.osc.util.LOG;
+
 /**
  * @author pj567
  * @date :2020/12/18
@@ -77,9 +80,8 @@ public class ApiConfig {
 
     private final JarLoader jarLoader = new JarLoader();
     private final JsLoader jsLoader = new JsLoader();
-    private final IPyLoader pyLoader =  new pyLoader();
+    private final IPyLoader pyLoader = new pyLoader();
     private final String userAgent = "okhttp/3.15";
-
     private final String requestAccept = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9";
 
     private ApiConfig() {
@@ -104,7 +106,7 @@ public class ApiConfig {
         String content = json;
         try {
             if (AES.isJson(content)) return content;
-            Pattern pattern = getPattern("[A-Za-z0]{8}\\*\\*");
+            Pattern pattern = getPattern("[A-Za-z0-9]{8}\\*\\*");
             Matcher matcher = pattern.matcher(content);
             if (matcher.find()) {
                 content = content.substring(content.indexOf(matcher.group()) + 10);
@@ -122,252 +124,259 @@ public class ApiConfig {
                 json = content;
             }
         } catch (Exception e) {
-            e.printStackTrace();
+            LOG.e("FindResult decode error", e);
         }
         return json;
     }
 
     private static byte[] getImgJar(String body) {
-        Pattern pattern = getPattern("[A-Za-z0]{8}\\*\\*");
+        Pattern pattern = getPattern("[A-Za-z0-9]{8}\\*\\*");
         Matcher matcher = pattern.matcher(body);
         if (matcher.find()) {
             body = body.substring(body.indexOf(matcher.group()) + 10);
             return Base64.decode(body, Base64.DEFAULT);
         }
-        return "".getBytes();
+        return new byte[0];
     }
 
     public void loadConfig(boolean useCache, LoadConfigCallback callback, Activity activity) {
-    String apiUrl = Hawk.get(HawkConfig.API_URL, HomeActivity.getRes().getString(R.string.app_source));
-    if (apiUrl.isEmpty()) {
-        callback.error("源地址为空");
-        return;
-    }
-    File cache = new File(App.getInstance().getFilesDir().getAbsolutePath() + "/" + MD5.encode(apiUrl));
-    final String finalApiUrl = apiUrl;
-
-    // ========== 第一步：优先读取本地缓存，立刻回调首页渲染 ==========
-    boolean cacheAvailable = false;
-    if (cache.exists()) {
-        try {
-            parseJson(finalApiUrl, cache);
-            callback.success();
-            cacheAvailable = true;
-        } catch (Throwable th) {
-            th.printStackTrace();
-        }
-    }
-
-    // ========== 第二步：后台异步拉取远端最新配置，不阻塞首页 ==========
-    final boolean hasCache = cacheAvailable;
-    new Thread(() -> {
-        String TempKey = null, configUrl = "", pk = ";pk;";
-        if (finalApiUrl.contains(pk)) {
-            String[] a = finalApiUrl.split(pk);
-            TempKey = a[1];
-            if (finalApiUrl.startsWith("clan")) {
-                configUrl = clanToAddress(a[0]);
-            } else if (finalApiUrl.startsWith("http")) {
-                configUrl = a[0];
-            } else {
-                configUrl = "http://" + a[0];
-            }
-        } else if (finalApiUrl.startsWith("clan")) {
-            configUrl = clanToAddress(finalApiUrl);
-        } else if (!finalApiUrl.startsWith("http")) {
-            configUrl = "http://" + finalApiUrl;
-        } else {
-            configUrl = finalApiUrl;
-        }
-        System.out.println("API URL :" + configUrl);
-        String configKey = TempKey;
-        OkGo.<String>get(configUrl)
-                .headers("User-Agent", userAgent)
-                .headers("Accept", requestAccept)
-                .execute(new AbsCallback<String>() {
-                    @Override
-                    public void onSuccess(Response<String> response) {
-                        try {
-                            String json = response.body();
-                            parseJson(finalApiUrl, json);
-                            // 更新缓存文件
-                            try {
-                                File cacheDir = cache.getParentFile();
-                                if (!cacheDir.exists())
-                                    cacheDir.mkdirs();
-                                if (cache.exists())
-                                    cache.delete();
-                                FileOutputStream fos = new FileOutputStream(cache);
-                                fos.write(json.getBytes("UTF-8"));
-                                fos.flush();
-                                fos.close();
-                            } catch (Throwable th) {
-                                th.printStackTrace();
-                            }
-                            // 远端更新成功，通知首页刷新
-                            activity.runOnUiThread(() -> callback.success());
-                        } catch (Throwable th) {
-                            th.printStackTrace();
-                            if (!hasCache) {
-                                activity.runOnUiThread(() -> callback.error("解析配置失败"));
-                            }
-                        }
-                    }
-
-                    @Override
-                    public void onError(Response<String> response) {
-                        super.onError(response);
-                        // 有缓存：静默失败，不打扰用户
-                        // 无缓存：才报错提示
-                        if (!hasCache) {
-                            activity.runOnUiThread(() ->
-                                callback.error("拉取配置失败\n" + (response.getException() != null ? response.getException().getMessage() : ""))
-                            );
-                        }
-                    }
-
-                    public String convertResponse(okhttp3.Response response) throws Throwable {
-                        String result = "";
-                        if (response.body() == null) {
-                            result = "";
-                        } else {
-                            result = FindResult(response.body().string(), configKey);
-                        }
-                        if (finalApiUrl.startsWith("clan")) {
-                            result = clanContentFix(clanToAddress(finalApiUrl), result);
-                        }
-                        result = fixContentPath(finalApiUrl, result);
-                        return result;
-                    }
-                });
-    }).start();
-}
-
-    public void loadJar(boolean useCache, String spider, LoadConfigCallback callback) {
-    String[] urls = spider.split(";md5;");
-    String jarUrl = urls[0];
-    String md5 = urls.length > 1 ? urls[1].trim() : "";
-    File cache = new File(App.getInstance().getFilesDir().getAbsolutePath() + "/csp/" + MD5.string2MD5(jarUrl) + ".jar");
-
-    // 从 Hawk 读取 jarCache 开关（parseJson 时持久化到 Hawk，解决时序问题）
-    String jarCacheSetting = Hawk.get("jar_cache", "true");
-
-    if (!md5.isEmpty() || useCache) {
-        if (cache.exists() && (useCache || MD5.getFileMd5(cache).equalsIgnoreCase(md5))) {
-            if (jarLoader.load(cache.getAbsolutePath())) {
-                callback.success();
-            } else {
-                callback.error("从缓存加载jar失败");
-            }
+        String apiUrl = Hawk.get(HawkConfig.API_URL, HomeActivity.getRes().getString(R.string.app_source));
+        if (apiUrl.isEmpty()) {
+            callback.error("源地址为空");
             return;
         }
-    } else {
-        // 用 Hawk 里持久化的 jarCache 配置，不再依赖内存里的静态变量
-        if (Boolean.parseBoolean(jarCacheSetting) && cache.exists() && !FileUtils.isWeekAgo(cache)) {
-            if (jarLoader.load(cache.getAbsolutePath())) {
+        File cache = new File(App.getInstance().getFilesDir().getAbsolutePath() + "/" + MD5.encode(apiUrl));
+        final String finalApiUrl = apiUrl;
+        WeakReference<Activity> activityRef = new WeakReference<>(activity);
+
+        boolean cacheAvailable = false;
+        String oldCacheMd5 = "";
+        if (cache.exists()) {
+            try {
+                oldCacheMd5 = MD5.getFileMd5(cache);
+                parseJson(finalApiUrl, cache);
                 callback.success();
-                return;
+                cacheAvailable = true;
+            } catch (Throwable th) {
+                LOG.e("缓存解析异常", th);
             }
         }
+
+        final boolean hasCache = cacheAvailable;
+        final String preMd5 = oldCacheMd5;
+        new Thread(() -> {
+            String TempKey = null, configUrl = "", pk = ";pk;";
+            if (finalApiUrl.contains(pk)) {
+                String[] a = finalApiUrl.split(pk);
+                TempKey = a[1];
+                if (finalApiUrl.startsWith("clan")) {
+                    configUrl = clanToAddress(a[0]);
+                } else if (finalApiUrl.startsWith("http")) {
+                    configUrl = a[0];
+                } else {
+                    configUrl = "http://" + a[0];
+                }
+            } else if (finalApiUrl.startsWith("clan")) {
+                configUrl = clanToAddress(finalApiUrl);
+            } else if (!finalApiUrl.startsWith("http")) {
+                configUrl = "http://" + finalApiUrl;
+            } else {
+                configUrl = finalApiUrl;
+            }
+            LOG.i("API URL :" + configUrl);
+            String configKey = TempKey;
+            OkGo.<String>get(configUrl)
+                    .headers("User-Agent", userAgent)
+                    .headers("Accept", requestAccept)
+                    .execute(new AbsCallback<String>() {
+                        @Override
+                        public void onSuccess(Response<String> response) {
+                            Activity act = activityRef.get();
+                            if (act == null || act.isFinishing()) return;
+                            try {
+                                String json = response.body();
+                                String newMd5 = MD5.encode(json);
+                                // MD5相同：内容无变更，跳过写缓存、跳过刷新回调
+                                if (preMd5.equals(newMd5)) {
+                                    LOG.i("远端配置与本地缓存一致，跳过更新");
+                                    return;
+                                }
+                                parseJson(finalApiUrl, json);
+                                try {
+                                    File cacheDir = cache.getParentFile();
+                                    if (cacheDir != null && !cacheDir.exists())
+                                        cacheDir.mkdirs();
+                                    if (cache.exists()) cache.delete();
+                                    try (FileOutputStream fos = new FileOutputStream(cache)) {
+                                        fos.write(json.getBytes(StandardCharsets.UTF_8));
+                                        fos.flush();
+                                    }
+                                } catch (Throwable th) {
+                                    LOG.e("写入缓存失败", th);
+                                }
+                                act.runOnUiThread(callback::newConfig);
+                            } catch (Throwable th) {
+                                LOG.e("远端配置解析失败", th);
+                                if (!hasCache) {
+                                    act.runOnUiThread(() -> callback.error("解析配置失败"));
+                                }
+                            }
+                        }
+
+                        @Override
+                        public void onError(Response<String> response) {
+                            Activity act = activityRef.get();
+                            if (act == null || act.isFinishing()) return;
+                            if (!hasCache) {
+                                Throwable e = response.getException();
+                                String msg = e != null ? e.getMessage() : "未知网络错误";
+                                act.runOnUiThread(() -> callback.error("拉取配置失败\n" + msg));
+                            }
+                        }
+
+                        @Override
+                        public String convertResponse(okhttp3.Response response) throws Throwable {
+                            String result = "";
+                            if (response.body() != null) {
+                                result = FindResult(response.body().string(), configKey);
+                            }
+                            if (finalApiUrl.startsWith("clan")) {
+                                String addr = clanToAddress(finalApiUrl);
+                                result = clanContentFix(addr, result);
+                            }
+                            result = fixContentPath(finalApiUrl, result);
+                            return result;
+                        }
+                    });
+        }).start();
     }
 
-    boolean isJarInImg = jarUrl.startsWith("img+");
-    jarUrl = jarUrl.replace("img+", "");
-    OkGo.<File>get(jarUrl)
-            .headers("User-Agent", userAgent)
-            .headers("Accept", requestAccept)
-            .execute(new AbsCallback<File>() {
+    public void loadJar(boolean useCache, String spider, LoadConfigCallback callback) {
+        String[] urls = spider.split(";md5;");
+        String jarUrl = urls[0];
+        String md5 = urls.length > 1 ? urls[1].trim() : "";
+        File cache = new File(App.getInstance().getFilesDir().getAbsolutePath() + "/csp/" + MD5.string2MD5(jarUrl) + ".jar");
 
-                @Override
-                public File convertResponse(okhttp3.Response response) {
-                    File cacheDir = cache.getParentFile();
-                    assert cacheDir != null;
-                    if (!cacheDir.exists()) cacheDir.mkdirs();
-                    if (cache.exists()) cache.delete();
-                    assert response.body() != null;
-                    try (FileOutputStream fos = new FileOutputStream(cache)) {
-                        if (isJarInImg) {
-                            String respData = response.body().string();
-                            LOG.i("echo---jar Response: " + respData);
-                            byte[] imgJar = getImgJar(respData);
-                            if (imgJar == null || imgJar.length == 0) {
-                                LOG.e("echo---Generated JAR data is empty");
-                                callback.error("JAR data is empty");
-                            }
-                            fos.write(imgJar);
-                        } else {
-                            InputStream inputStream = response.body().byteStream();
-                            byte[] buffer = new byte[4096];
-                            int bytesRead;
-                            while ((bytesRead = inputStream.read(buffer)) != -1) {
-                                fos.write(buffer, 0, bytesRead);
-                            }
-                        }
-                        fos.flush();
-                    } catch (IOException e) {
-                        return null;
-                    }
-                    return cache;
+        String jarCacheSetting = Hawk.get("jar_cache", "true");
+
+        if (!md5.isEmpty() || useCache) {
+            if (cache.exists() && (useCache || MD5.getFileMd5(cache).equalsIgnoreCase(md5))) {
+                if (jarLoader.load(cache.getAbsolutePath())) {
+                    callback.success();
+                } else {
+                    callback.error("从缓存加载jar失败");
                 }
+                return;
+            }
+        } else {
+            if (Boolean.parseBoolean(jarCacheSetting) && cache.exists() && !FileUtils.isWeekAgo(cache)) {
+                if (jarLoader.load(cache.getAbsolutePath())) {
+                    callback.success();
+                    return;
+                }
+            }
+        }
 
-                @Override
-                public void onSuccess(Response<File> response) {
-                    File file = response.body();
-                    if (file != null && file.exists()) {
-                        try {
-                            if (jarLoader.load(file.getAbsolutePath())) {
-                                callback.success();
+        boolean isJarInImg = jarUrl.startsWith("img+");
+        jarUrl = jarUrl.replace("img+", "");
+        OkGo.<File>get(jarUrl)
+                .headers("User-Agent", userAgent)
+                .headers("Accept", requestAccept)
+                .execute(new AbsCallback<File>() {
+                    @Override
+                    public File convertResponse(okhttp3.Response response) {
+                        File cacheDir = cache.getParentFile();
+                        if (cacheDir == null) return null;
+                        if (!cacheDir.exists()) cacheDir.mkdirs();
+                        if (cache.exists()) cache.delete();
+                        okhttp3.ResponseBody body = response.body();
+                        if (body == null) return null;
+                        try (FileOutputStream fos = new FileOutputStream(cache)) {
+                            if (isJarInImg) {
+                                String respData = body.string();
+                                LOG.i("echo---jar Response: " + respData);
+                                byte[] imgJar = getImgJar(respData);
+                                if (imgJar == null || imgJar.length == 0) {
+                                    LOG.e("echo---Generated JAR data is empty");
+                                    return null;
+                                }
+                                fos.write(imgJar);
                             } else {
-                                LOG.e("echo---jar Loader returned false");
-                                callback.error("从网络上加载jar写入缓存后加载失败");
+                                InputStream inputStream = body.byteStream();
+                                byte[] buffer = new byte[4096];
+                                int bytesRead;
+                                while ((bytesRead = inputStream.read(buffer)) != -1) {
+                                    fos.write(buffer, 0, bytesRead);
+                                }
                             }
-                        } catch (Exception e) {
-                            LOG.e("echo---jar Loader threw exception: " + e.getMessage());
-                            callback.error("JAR加载异常: " + e.getMessage());
+                            fos.flush();
+                        } catch (IOException e) {
+                            LOG.e("jar write error", e);
+                            return null;
                         }
-                    } else {
-                        LOG.e("echo---jar File not found");
-                        callback.error("从网络上加载jar地址字节数据为空");
+                        return cache;
                     }
-                }
 
-                @Override
-                public void onError(Response<File> response) {
-                    Throwable ex = response.getException();
-                    if (ex != null) {
-                        LOG.i("echo---jar Request failed: " + ex.getMessage());
+                    @Override
+                    public void onSuccess(Response<File> response) {
+                        File file = response.body();
+                        if (file != null && file.exists()) {
+                            try {
+                                if (jarLoader.load(file.getAbsolutePath())) {
+                                    callback.success();
+                                } else {
+                                    LOG.e("echo---jar Loader returned false");
+                                    callback.error("从网络上加载jar写入缓存后加载失败");
+                                }
+                            } catch (Exception e) {
+                                LOG.e("echo---jar Loader threw exception: " + e.getMessage(), e);
+                                callback.error("JAR加载异常: " + e.getMessage());
+                            }
+                        } else {
+                            LOG.e("echo---jar File not found");
+                            callback.error("从网络上加载jar地址字节数据为空");
+                        }
                     }
-                    if (cache.exists()) jarLoader.load(cache.getAbsolutePath());
-                    callback.error(ex != null ? "从网络上加载jar失败：" + ex.getMessage() : "未知网络错误");
-                }
-            });
-}
+
+                    @Override
+                    public void onError(Response<File> response) {
+                        Throwable ex = response.getException();
+                        if (ex != null) {
+                            LOG.i("echo---jar Request failed: " + ex.getMessage());
+                        }
+                        if (cache.exists()) {
+                            if (jarLoader.load(cache.getAbsolutePath())) {
+                                callback.success();
+                                return;
+                            }
+                        }
+                        callback.error(ex != null ? "从网络上加载jar失败：" + ex.getMessage() : "未知网络错误");
+                    }
+                });
+    }
 
     private void parseJson(String apiUrl, File f) throws Throwable {
-        System.out.println("从本地缓存加载" + f.getAbsolutePath());
+        LOG.i("从本地缓存加载" + f.getAbsolutePath());
         BufferedReader bReader = new BufferedReader(new InputStreamReader(new FileInputStream(f), "UTF-8"));
         StringBuilder sb = new StringBuilder();
-        String s = "";
+        String s;
         while ((s = bReader.readLine()) != null) {
-            sb.append(s + "\n");
+            sb.append(s).append("\n");
         }
         bReader.close();
         parseJson(apiUrl, sb.toString());
     }
 
-    private static  String jarCache ="true";
     private void parseJson(String apiUrl, String jsonStr) {
-//        pyLoader.setConfig(jsonStr);
         JsonObject infoJson = new Gson().fromJson(jsonStr, JsonObject.class);
-        jarCache = DefaultConfig.safeJsonString(infoJson, "jarCache", "true");
-		Hawk.put("jar_cache", jarCache);  // 持久化到 Hawk，解决时序问题
-        // spider
+        String jarCache = DefaultConfig.safeJsonString(infoJson, "jarCache", "true");
+        Hawk.put("jar_cache", jarCache);
+
         spider = DefaultConfig.safeJsonString(infoJson, "spider", "");
-        // wallpaper
         wallpaper = DefaultConfig.safeJsonString(infoJson, "wallpaper", "");
-        // 直播播放请求头
         livePlayHeaders = infoJson.getAsJsonArray("livePlayHeaders");
-        // 远端站点源
+
+        sourceBeanList.clear();
         SourceBean firstSite = null;
         JsonArray sites = infoJson.has("video") ? infoJson.getAsJsonObject("video").getAsJsonArray("sites") : infoJson.get("sites").getAsJsonArray();
         for (JsonElement opt : sites) {
@@ -375,14 +384,14 @@ public class ApiConfig {
             SourceBean sb = new SourceBean();
             String siteKey = obj.get("key").getAsString().trim();
             sb.setKey(siteKey);
-            sb.setName(obj.has("name")?obj.get("name").getAsString().trim():siteKey);
+            sb.setName(obj.has("name") ? obj.get("name").getAsString().trim() : siteKey);
             sb.setType(obj.get("type").getAsInt());
             sb.setApi(obj.get("api").getAsString().trim());
             sb.setSearchable(DefaultConfig.safeJsonInt(obj, "searchable", 1));
             sb.setQuickSearch(DefaultConfig.safeJsonInt(obj, "quickSearch", 1));
-            if(siteKey.startsWith("py_")){
+            if (siteKey.startsWith("py_")) {
                 sb.setFilterable(1);
-            }else {
+            } else {
                 sb.setFilterable(DefaultConfig.safeJsonInt(obj, "filterable", 1));
             }
             sb.setHide(DefaultConfig.safeJsonInt(obj, "hide", 0));
@@ -397,7 +406,7 @@ public class ApiConfig {
                 firstSite = sb;
             sourceBeanList.put(siteKey, sb);
         }
-        if (sourceBeanList != null && sourceBeanList.size() > 0) {
+        if (sourceBeanList.size() > 0) {
             String home = Hawk.get(HawkConfig.HOME_API, "");
             SourceBean sh = getSource(home);
             if (sh == null || sh.getHide() == 1)
@@ -405,9 +414,8 @@ public class ApiConfig {
             else
                 setSourceBean(sh);
         }
-        // 需要使用vip解析的flag
+
         vipParseFlags = DefaultConfig.safeJsonStringList(infoJson, "flags");
-        // 解析地址
         parseBeanList.clear();
         if (infoJson.has("parses")) {
             JsonArray parses = infoJson.get("parses").getAsJsonArray();
@@ -421,164 +429,132 @@ public class ApiConfig {
                 pb.setType(DefaultConfig.safeJsonInt(obj, "type", 0));
                 parseBeanList.add(pb);
             }
-            if(!parseBeanList.isEmpty()){
+            if (!parseBeanList.isEmpty()) {
                 addSuperParse();
             }
         }
-        // 获取默认解析
-        if (parseBeanList != null && parseBeanList.size() > 0) {
+        mDefaultParse = null;
+        if (!parseBeanList.isEmpty()) {
             String defaultParse = Hawk.get(HawkConfig.DEFAULT_PARSE, "");
-            if (!TextUtils.isEmpty(defaultParse))
+            if (!TextUtils.isEmpty(defaultParse)) {
                 for (ParseBean pb : parseBeanList) {
-                    if (pb.getName().equals(defaultParse))
+                    if (pb.getName().equals(defaultParse)) {
                         setDefaultParse(pb);
+                        break;
+                    }
                 }
+            }
             if (mDefaultParse == null)
                 setDefaultParse(parseBeanList.get(0));
         }
 
-        // takagen99: Check if Live URL is setup in Settings, if no, get from File Config
-        liveChannelGroupList.clear();           //修复从后台切换重复加载频道列表
+        liveChannelGroupList.clear();
         String liveURL = Hawk.get(HawkConfig.LIVE_URL, "");
-        String epgURL  = Hawk.get(HawkConfig.EPG_URL, "");
-
+        String epgURL = Hawk.get(HawkConfig.EPG_URL, "");
         String liveURL_final = null;
         try {
             if (infoJson.has("lives") && infoJson.get("lives").getAsJsonArray() != null) {
-                JsonObject livesOBJ = infoJson.get("lives").getAsJsonArray().get(0).getAsJsonObject();
-                String lives = livesOBJ.toString();
-                int index = lives.indexOf("proxy://");
-                if (index != -1) {
-                    int endIndex = lives.lastIndexOf("\"");
-                    String url = lives.substring(index, endIndex);
-                    url = DefaultConfig.checkReplaceProxy(url);
-
-                    //clan
-                    String extUrl = Uri.parse(url).getQueryParameter("ext");
-                    if (extUrl != null && !extUrl.isEmpty()) {
-                        String extUrlFix;
-                        if (extUrl.startsWith("http") || extUrl.startsWith("clan://")) {
-                            extUrlFix = extUrl;
-                        } else {
-                            extUrlFix = new String(Base64.decode(extUrl, Base64.DEFAULT | Base64.URL_SAFE | Base64.NO_WRAP), "UTF-8");
+                JsonArray livesArr = infoJson.get("lives").getAsJsonArray();
+                if (livesArr.size() > 0) {
+                    JsonObject livesOBJ = livesArr.get(0).getAsJsonObject();
+                    String lives = livesOBJ.toString();
+                    int index = lives.indexOf("proxy://");
+                    if (index != -1) {
+                        int endIndex = lives.lastIndexOf("\"");
+                        String url = lives.substring(index, endIndex);
+                        url = DefaultConfig.checkReplaceProxy(url);
+                        String extUrl = Uri.parse(url).getQueryParameter("ext");
+                        if (extUrl != null && !extUrl.isEmpty()) {
+                            String extUrlFix;
+                            if (extUrl.startsWith("http") || extUrl.startsWith("clan://")) {
+                                extUrlFix = extUrl;
+                            } else {
+                                extUrlFix = new String(Base64.decode(extUrl, Base64.DEFAULT | Base64.URL_SAFE | Base64.NO_WRAP), "UTF-8");
+                            }
+                            if (extUrlFix.startsWith("clan://")) {
+                                extUrlFix = clanContentFix(clanToAddress(apiUrl), extUrlFix);
+                            }
+                            LOG.i("Live URL :" + extUrlFix);
+                            putLiveHistory(extUrlFix);
+                            if (StringUtils.isBlank(liveURL)) {
+                                Hawk.put(HawkConfig.LIVE_URL, extUrlFix);
+                            } else {
+                                extUrlFix = liveURL;
+                            }
+                            liveURL_final = extUrlFix;
                         }
-                        if (extUrlFix.startsWith("clan://")) {
-                            extUrlFix = clanContentFix(clanToAddress(apiUrl), extUrlFix);
+                        if (livesOBJ.has("epg")) {
+                            String epg = livesOBJ.get("epg").getAsString();
+                            LOG.i("EPG URL :" + epg);
+                            putEPGHistory(epg);
+                            if (StringUtils.isBlank(epgURL)) {
+                                Hawk.put(HawkConfig.EPG_URL, epg);
+                            } else {
+                                Hawk.put(HawkConfig.EPG_URL, epgURL);
+                            }
                         }
-
-                        // takagen99: Capture Live URL into Config
-                        System.out.println("Live URL :" + extUrlFix);
-                        putLiveHistory(extUrlFix);
-                        // Overwrite with Live URL from Settings
-                        if (StringUtils.isBlank(liveURL)) {
-                            Hawk.put(HawkConfig.LIVE_URL, extUrlFix);
-                        } else {
-                            extUrlFix = liveURL;
-                        }
-
-                        // Final Live URL
-                        liveURL_final = extUrlFix;
-
-//                    // Encoding the Live URL
-//                    extUrlFix = Base64.encodeToString(extUrlFix.getBytes("UTF-8"), Base64.DEFAULT | Base64.URL_SAFE | Base64.NO_WRAP);
-//                    url = url.replace(extUrl, extUrlFix);
-                    }
-
-                    // takagen99 : Getting EPG URL from File Config & put into Settings
-                    if (livesOBJ.has("epg")) {
-                        String epg = livesOBJ.get("epg").getAsString();
-                        System.out.println("EPG URL :" + epg);
-                        putEPGHistory(epg);
-                        // Overwrite with EPG URL from Settings
-                        if (StringUtils.isBlank(epgURL)) {
-                            Hawk.put(HawkConfig.EPG_URL, epg);
-                        } else {
-                            Hawk.put(HawkConfig.EPG_URL, epgURL);
-                        }
-                    }
-
-//                // Populate Live Channel Listing
-//                LiveChannelGroup liveChannelGroup = new LiveChannelGroup();
-//                liveChannelGroup.setGroupName(url);
-//                liveChannelGroupList.add(liveChannelGroup);
-
-                } else {
-
-                    // if FongMi Live URL Formatting exists
-                    if (!lives.contains("type")) {
-                        loadLives(infoJson.get("lives").getAsJsonArray());
                     } else {
-                        JsonObject fengMiLives = infoJson.get("lives").getAsJsonArray().get(0).getAsJsonObject();
-                        Hawk.put(HawkConfig.LIVE_PLAYER_TYPE, DefaultConfig.safeJsonInt(fengMiLives, "playerType", -1));
-                        String type = fengMiLives.get("type").getAsString();
-                        if (type.equals("0")) {
-                            String url = fengMiLives.get("url").getAsString();
-
-                            // takagen99 : Getting EPG URL from File Config & put into Settings
-                            if (fengMiLives.has("epg")) {
-                                String epg = fengMiLives.get("epg").getAsString();
-                                System.out.println("EPG URL :" + epg);
-                                putEPGHistory(epg);
-                                // Overwrite with EPG URL from Settings
-                                if (StringUtils.isBlank(epgURL)) {
-                                    Hawk.put(HawkConfig.EPG_URL, epg);
-                                } else {
-                                    Hawk.put(HawkConfig.EPG_URL, epgURL);
+                        if (!lives.contains("type")) {
+                            loadLives(infoJson.get("lives").getAsJsonArray());
+                        } else {
+                            JsonObject fengMiLives = livesOBJ;
+                            Hawk.put(HawkConfig.LIVE_PLAYER_TYPE, DefaultConfig.safeJsonInt(fengMiLives, "playerType", -1));
+                            String type = fengMiLives.get("type").getAsString();
+                            if (type.equals("0")) {
+                                String url = fengMiLives.get("url").getAsString();
+                                if (fengMiLives.has("epg")) {
+                                    String epg = fengMiLives.get("epg").getAsString();
+                                    LOG.i("EPG URL :" + epg);
+                                    putEPGHistory(epg);
+                                    if (StringUtils.isBlank(epgURL)) {
+                                        Hawk.put(HawkConfig.EPG_URL, epg);
+                                    } else {
+                                        Hawk.put(HawkConfig.EPG_URL, epgURL);
+                                    }
                                 }
-                            }
-
-                            if (url.startsWith("http")) {
-                                // takagen99: Capture Live URL into Settings
-                                System.out.println("Live URL :" + url);
-                                putLiveHistory(url);
-                                // Overwrite with Live URL from Settings
-                                if (StringUtils.isBlank(liveURL)) {
-                                    Hawk.put(HawkConfig.LIVE_URL, url);
-                                } else {
-                                    url = liveURL;
+                                if (url.startsWith("http")) {
+                                    LOG.i("Live URL :" + url);
+                                    putLiveHistory(url);
+                                    if (StringUtils.isBlank(liveURL)) {
+                                        Hawk.put(HawkConfig.LIVE_URL, url);
+                                    } else {
+                                        url = liveURL;
+                                    }
+                                    liveURL_final = url;
                                 }
-
-                                // Final Live URL
-                                liveURL_final = url;
-
-//                            url = Base64.encodeToString(url.getBytes("UTF-8"), Base64.DEFAULT | Base64.URL_SAFE | Base64.NO_WRAP);
                             }
                         }
                     }
+                    if (StringUtils.isBlank(liveURL_final)) {
+                        liveURL_final = liveURL;
+                    }
+                    if (!TextUtils.isEmpty(liveURL_final)) {
+                        liveURL_final = Base64.encodeToString(liveURL_final.getBytes(StandardCharsets.UTF_8), Base64.DEFAULT | Base64.URL_SAFE | Base64.NO_WRAP);
+                        String proxyAddr = ControlManager.get().getAddress(false);
+                        liveURL_final = proxyAddr + "proxy?do=live&type=txt&ext=" + liveURL_final;
+                        LiveChannelGroup liveChannelGroup = new LiveChannelGroup();
+                        liveChannelGroup.setGroupName(liveURL_final);
+                        liveChannelGroupList.add(liveChannelGroup);
+                    }
                 }
-
-                // takagen99: Load Live Channel from settings URL (WIP)
-                if (StringUtils.isBlank(liveURL_final)) {
-                    liveURL_final = liveURL;
-                }
-                liveURL_final = Base64.encodeToString(liveURL_final.getBytes("UTF-8"), Base64.DEFAULT | Base64.URL_SAFE | Base64.NO_WRAP);
-                liveURL_final = "http://127.0.0.1:9978/proxy?do=live&type=txt&ext=" + liveURL_final;
-                LiveChannelGroup liveChannelGroup = new LiveChannelGroup();
-                liveChannelGroup.setGroupName(liveURL_final);
-                liveChannelGroupList.add(liveChannelGroup);
             }
-
-
         } catch (Throwable th) {
-            th.printStackTrace();
+            LOG.e("parse lives error", th);
         }
 
-        // Video parse rule for host
         if (infoJson.has("rules")) {
             VideoParseRuler.clearRule();
-            for(JsonElement oneHostRule : infoJson.getAsJsonArray("rules")) {
+            for (JsonElement oneHostRule : infoJson.getAsJsonArray("rules")) {
                 JsonObject obj = (JsonObject) oneHostRule;
-                //嗅探过滤规则
                 if (obj.has("host")) {
                     String host = obj.get("host").getAsString();
                     if (obj.has("rule")) {
                         JsonArray ruleJsonArr = obj.getAsJsonArray("rule");
                         ArrayList<String> rule = new ArrayList<>();
                         for (JsonElement one : ruleJsonArr) {
-                            String oneRule = one.getAsString();
-                            rule.add(oneRule);
+                            rule.add(one.getAsString());
                         }
-                        if (rule.size() > 0) {
+                        if (!rule.isEmpty()) {
                             VideoParseRuler.addHostRule(host, rule);
                         }
                     }
@@ -586,15 +562,13 @@ public class ApiConfig {
                         JsonArray filterJsonArr = obj.getAsJsonArray("filter");
                         ArrayList<String> filter = new ArrayList<>();
                         for (JsonElement one : filterJsonArr) {
-                            String oneFilter = one.getAsString();
-                            filter.add(oneFilter);
+                            filter.add(one.getAsString());
                         }
-                        if (filter.size() > 0) {
+                        if (!filter.isEmpty()) {
                             VideoParseRuler.addHostFilter(host, filter);
                         }
                     }
                 }
-                //广告过滤规则
                 if (obj.has("hosts") && obj.has("regex")) {
                     ArrayList<String> rule = new ArrayList<>();
                     ArrayList<String> ads = new ArrayList<>();
@@ -611,13 +585,11 @@ public class ApiConfig {
                         VideoParseRuler.addHostRegex(host, ads);
                     }
                 }
-                //嗅探脚本规则 如 click
                 if (obj.has("hosts") && obj.has("script")) {
                     ArrayList<String> scripts = new ArrayList<>();
                     JsonArray scriptArray = obj.getAsJsonArray("script");
                     for (JsonElement one : scriptArray) {
-                        String script = one.getAsString();
-                        scripts.add(script);
+                        scripts.add(one.getAsString());
                     }
                     JsonArray array = obj.getAsJsonArray("hosts");
                     for (JsonElement one : array) {
@@ -630,58 +602,55 @@ public class ApiConfig {
 
         String defaultIJKADS = "{\"ijk\":[{\"options\":[{\"name\":\"opensles\",\"category\":4,\"value\":\"0\"},{\"name\":\"overlay-format\",\"category\":4,\"value\":\"842225234\"},{\"name\":\"framedrop\",\"category\":4,\"value\":\"0\"},{\"name\":\"soundtouch\",\"category\":4,\"value\":\"1\"},{\"name\":\"start-on-prepared\",\"category\":4,\"value\":\"1\"},{\"name\":\"http-detect-rangeupport\",\"category\":1,\"value\":\"0\"},{\"name\":\"fflags\",\"category\":1,\"value\":\"fastseek\"},{\"name\":\"skip_loop_filter\",\"category\":2,\"value\":\"48\"},{\"name\":\"reconnect\",\"category\":4,\"value\":\"1\"},{\"name\":\"enable-accurate-seek\",\"category\":4,\"value\":\"0\"},{\"name\":\"mediacodec\",\"category\":4,\"value\":\"0\"},{\"name\":\"mediacodec-auto-rotate\",\"category\":4,\"value\":\"0\"},{\"name\":\"mediacodec-handle-resolution-change\",\"category\":4,\"value\":\"0\"},{\"name\":\"mediacodec-hevc\",\"category\":4,\"value\":\"0\"},{\"name\":\"dns_cache_timeout\",\"category\":1,\"value\":\"600000000\"}],\"group\":\"软解码\"},{\"options\":[{\"name\":\"opensles\",\"category\":4,\"value\":\"0\"},{\"name\":\"overlay-format\",\"category\":4,\"value\":\"842225234\"},{\"name\":\"framedrop\",\"category\":4,\"value\":\"0\"},{\"name\":\"soundtouch\",\"category\":4,\"value\":\"1\"},{\"name\":\"start-on-prepared\",\"category\":4,\"value\":\"1\"},{\"name\":\"http-detect-rangeupport\",\"category\":1,\"value\":\"0\"},{\"name\":\"fflags\",\"category\":1,\"value\":\"fastseek\"},{\"name\":\"skip_loop_filter\",\"category\":2,\"value\":\"48\"},{\"name\":\"reconnect\",\"category\":4,\"value\":\"1\"},{\"name\":\"enable-accurate-seek\",\"category\":4,\"value\":\"0\"},{\"name\":\"mediacodec\",\"category\":4,\"value\":\"1\"},{\"name\":\"mediacodec-auto-rotate\",\"category\":4,\"value\":\"1\"},{\"name\":\"mediacodec-handle-resolution-change\",\"category\":4,\"value\":\"1\"},{\"name\":\"mediacodec-hevc\",\"category\":4,\"value\":\"1\"},{\"name\":\"dns_cache_timeout\",\"category\":1,\"value\":\"600000000\"}],\"group\":\"硬解码\"}],\"ads\":[\"mimg.0c1q0l.cn\",\"www.googletagmanager.com\",\"www.google-analytics.com\",\"mc.usihnbcq.cn\",\"mg.g1mm3d.cn\",\"mscs.svaeuzh.cn\",\"cnzz.hhttm.top\",\"tp.vinuxhome.com\",\"cnzz.mmstat.com\",\"www.baihuillq.com\",\"s23.cnzz.com\",\"z3.cnzz.com\",\"c.cnzz.com\",\"stj.v1vo.top\",\"z12.cnzz.com\",\"img.mosflower.cn\",\"tips.gamevvip.com\",\"ehwe.yhdtns.com\",\"xdn.cqqc3.com\",\"www.jixunkyy.cn\",\"sp.chemacid.cn\",\"hm.baidu.com\",\"s9.cnzz.com\",\"z6.cnzz.com\",\"um.cavuc.com\",\"mav.mavuz.com\",\"wofwk.aoidf3.com\",\"z5.cnzz.com\",\"xc.hubeijieshikj.cn\",\"tj.tianwenhu.com\",\"xg.gars57.cn\",\"k.jinxiuzhilv.com\",\"cdn.bootcss.com\",\"ppl.xunzhuo123.com\",\"xomk.jiangjunmh.top\",\"img.xunzhuo123.com\",\"z1.cnzz.com\",\"s13.cnzz.com\",\"xg.huataisangao.cn\",\"z7.cnzz.com\",\"xg.huataisangao.cn\",\"z2.cnzz.com\",\"s96.cnzz.com\",\"q11.cnzz.com\",\"thy.dacedsfa.cn\",\"xg.whsbpw.cn\",\"s19.cnzz.com\",\"z8.cnzz.com\",\"s4.cnzz.com\",\"f5w.as12df.top\",\"ae01.alicdn.com\",\"www.92424.cn\",\"k.wudejia.com\",\"vivovip.mmszxc.top\",\"qiu.xixiqiu.com\",\"cdnjs.hnfenxun.com\",\"cms.qdwght.com\"]}";
         JsonObject defaultJson = new Gson().fromJson(defaultIJKADS, JsonObject.class);
-        // 广告地址
-        if(AdBlocker.isEmpty()){
-            //默认广告拦截
+        if (AdBlocker.isEmpty()) {
             for (JsonElement host : defaultJson.getAsJsonArray("ads")) {
                 AdBlocker.addAdHost(host.getAsString());
             }
-            //追加的广告拦截
-            if(infoJson.has("ads")){
+            if (infoJson.has("ads")) {
                 for (JsonElement host : infoJson.getAsJsonArray("ads")) {
-                    if(!AdBlocker.hasHost(host.getAsString())){
-                        AdBlocker.addAdHost(host.getAsString());
+                    String h = host.getAsString();
+                    if (!AdBlocker.hasHost(h)) {
+                        AdBlocker.addAdHost(h);
                     }
                 }
             }
         }
-        // IJK解码配置
-        if (ijkCodes == null) {
-            ijkCodes = new ArrayList<>();
-            boolean foundOldSelect = false;
-            String ijkCodec = Hawk.get(HawkConfig.IJK_CODEC, "");
-            JsonArray ijkJsonArray = infoJson.has("ijk") ? infoJson.get("ijk").getAsJsonArray() : defaultJson.get("ijk").getAsJsonArray();
-            for (JsonElement opt : ijkJsonArray) {
-                JsonObject obj = (JsonObject) opt;
-                String name = obj.get("group").getAsString();
-                LinkedHashMap<String, String> baseOpt = new LinkedHashMap<>();
-                for (JsonElement cfg : obj.get("options").getAsJsonArray()) {
-                    JsonObject cObj = (JsonObject) cfg;
-                    String key = cObj.get("category").getAsString() + "|" + cObj.get("name").getAsString();
-                    String val = cObj.get("value").getAsString();
-                    baseOpt.put(key, val);
-                }
-                IJKCode codec = new IJKCode();
-                codec.setName(name);
-                codec.setOption(baseOpt);
-                if (name.equals(ijkCodec) || TextUtils.isEmpty(ijkCodec)) {
-                    codec.selected(true);
-                    ijkCodec = name;
-                    foundOldSelect = true;
-                } else {
-                    codec.selected(false);
-                }
-                ijkCodes.add(codec);
+
+        // 修复：每次解析都重建ijkCodes，支持远端ijk配置热更新
+        ijkCodes = new ArrayList<>();
+        boolean foundOldSelect = false;
+        String ijkCodec = Hawk.get(HawkConfig.IJK_CODEC, "");
+        JsonArray ijkJsonArray = infoJson.has("ijk") ? infoJson.get("ijk").getAsJsonArray() : defaultJson.get("ijk").getAsJsonArray();
+        for (JsonElement opt : ijkJsonArray) {
+            JsonObject obj = (JsonObject) opt;
+            String name = obj.get("group").getAsString();
+            LinkedHashMap<String, String> baseOpt = new LinkedHashMap<>();
+            for (JsonElement cfg : obj.get("options").getAsJsonArray()) {
+                JsonObject cObj = (JsonObject) cfg;
+                String key = cObj.get("category").getAsString() + "|" + cObj.get("name").getAsString();
+                String val = cObj.get("value").getAsString();
+                baseOpt.put(key, val);
             }
-            if (!foundOldSelect && ijkCodes.size() > 0) {
-                ijkCodes.get(0).selected(true);
+            IJKCode codec = new IJKCode();
+            codec.setName(name);
+            codec.setOption(baseOpt);
+            if (name.equals(ijkCodec) || TextUtils.isEmpty(ijkCodec)) {
+                codec.selected(true);
+                ijkCodec = name;
+                foundOldSelect = true;
+            } else {
+                codec.selected(false);
             }
+            ijkCodes.add(codec);
+        }
+        if (!foundOldSelect && !ijkCodes.isEmpty()) {
+            ijkCodes.get(0).selected(true);
         }
     }
 
     private void putLiveHistory(String url) {
         if (!url.isEmpty()) {
-            ArrayList<String> liveHistory = Hawk.get(HawkConfig.LIVE_HISTORY, new ArrayList<String>());
+            ArrayList<String> liveHistory = Hawk.get(HawkConfig.LIVE_HISTORY, new ArrayList<>());
             if (!liveHistory.contains(url))
                 liveHistory.add(0, url);
             if (liveHistory.size() > 20)
@@ -692,7 +661,7 @@ public class ApiConfig {
 
     public static void putEPGHistory(String url) {
         if (!url.isEmpty()) {
-            ArrayList<String> epgHistory = Hawk.get(HawkConfig.EPG_HISTORY, new ArrayList<String>());
+            ArrayList<String> epgHistory = Hawk.get(HawkConfig.EPG_HISTORY, new ArrayList<>());
             if (!epgHistory.contains(url))
                 epgHistory.add(0, url);
             if (epgHistory.size() > 20)
@@ -708,9 +677,10 @@ public class ApiConfig {
         int channelNum = 0;
         for (JsonElement groupElement : livesArray) {
             LiveChannelGroup liveChannelGroup = new LiveChannelGroup();
-            liveChannelGroup.setLiveChannels(new ArrayList<LiveChannelItem>());
+            liveChannelGroup.setLiveChannels(new ArrayList<>());
             liveChannelGroup.setGroupIndex(groupIndex++);
-            String groupName = ((JsonObject) groupElement).get("group").getAsString().trim();
+            JsonObject groupObj = (JsonObject) groupElement;
+            String groupName = groupObj.get("group").getAsString().trim();
             String[] splitGroupName = groupName.split("_", 2);
             liveChannelGroup.setGroupName(splitGroupName[0]);
             if (splitGroupName.length > 1)
@@ -718,7 +688,7 @@ public class ApiConfig {
             else
                 liveChannelGroup.setGroupPassword("");
             channelIndex = 0;
-            for (JsonElement channelElement : ((JsonObject) groupElement).get("channels").getAsJsonArray()) {
+            for (JsonElement channelElement : groupObj.get("channels").getAsJsonArray()) {
                 JsonObject obj = (JsonObject) channelElement;
                 LiveChannelItem liveChannelItem = new LiveChannelItem();
                 liveChannelItem.setChannelName(obj.get("name").getAsString().trim());
@@ -750,9 +720,9 @@ public class ApiConfig {
     }
 
     public Spider getCSP(SourceBean sourceBean) {
-        if (sourceBean.getApi().endsWith(".js") || sourceBean.getApi().contains(".js?")){
+        if (sourceBean.getApi().endsWith(".js") || sourceBean.getApi().contains(".js?")) {
             return jsLoader.getSpider(sourceBean.getKey(), sourceBean.getApi(), sourceBean.getExt(), sourceBean.getJar());
-        }else if (sourceBean.getApi().contains(".py")) {
+        } else if (sourceBean.getApi().contains(".py")) {
             return pyLoader.getSpider(sourceBean.getKey(), sourceBean.getApi(), sourceBean.getExt());
         } else {
             return jarLoader.getSpider(sourceBean.getKey(), sourceBean.getApi(), sourceBean.getExt(), sourceBean.getJar());
@@ -762,12 +732,12 @@ public class ApiConfig {
     public Spider getPyCSP(String url) {
         return pyLoader.getSpider(MD5.string2MD5(url), url, "");
     }
-	
-    public Object[] proxyLocal(Map<String,String> param) {
+
+    public Object[] proxyLocal(Map<String, String> param) {
         if ("js".equals(param.get("do"))) {
             return jsLoader.proxyInvoke(param);
         }
-        SourceBean sourceBean = ApiConfig.get().getHomeSourceBean(); 
+        SourceBean sourceBean = ApiConfig.get().getHomeSourceBean();
         String apiString = sourceBean.getApi();
         return apiString.contains(".py") ? pyLoader.proxyInvoke(param) : jarLoader.proxyInvoke(param);
     }
@@ -782,15 +752,13 @@ public class ApiConfig {
 
     public interface LoadConfigCallback {
         void success();
-
+        void newConfig();
         void retry();
-
         void error(String msg);
     }
 
     public interface FastParseCallback {
         void success(boolean parse, String url, Map<String, String> header);
-
         void fail(int code, String msg);
     }
 
@@ -851,7 +819,7 @@ public class ApiConfig {
             if (code.getName().equals(name))
                 return code;
         }
-        return ijkCodes.get(0);
+        return (ijkCodes != null && !ijkCodes.isEmpty()) ? ijkCodes.get(0) : null;
     }
 
     public JsonArray getLivePlayHeaders() {
@@ -864,32 +832,36 @@ public class ApiConfig {
         } else {
             String link = lanLink.substring(7);
             int end = link.indexOf('/');
+            if (end <= 0) return "";
             return "http://" + link.substring(0, end) + "/file/" + link.substring(end + 1);
         }
     }
 
     String clanContentFix(String lanLink, String content) {
+        if (!lanLink.contains("/file/")) return content;
         String fix = lanLink.substring(0, lanLink.indexOf("/file/") + 6);
         return content.replace("clan://", fix);
     }
 
     String fixContentPath(String url, String content) {
         if (content.contains("\"./")) {
-            url=url.replace("file://","clan://localhost/");
+            url = url.replace("file://", "clan://localhost/");
             if (!url.startsWith("http") && !url.startsWith("clan://")) {
                 url = "http://" + url;
             }
             if (url.startsWith("clan://")) url = clanToAddress(url);
-            content = content.replace("./", url.substring(0, url.lastIndexOf("/") + 1));
+            if (url.contains("/")) {
+                content = content.replace("./", url.substring(0, url.lastIndexOf("/") + 1));
+            }
         }
         return content;
     }
 
-    public void clearJarLoader()
-    {
+    public void clearJarLoader() {
         jarLoader.clear();
     }
-    private void addSuperParse(){
+
+    private void addSuperParse() {
         ParseBean superPb = new ParseBean();
         superPb.setName("超级解析");
         superPb.setUrl("SuperParse");
@@ -897,16 +869,16 @@ public class ApiConfig {
         superPb.setType(4);
         parseBeanList.add(0, superPb);
     }
-    public void clearLoader(){
+
+    public void clearLoader() {
         jarLoader.clear();
         pyLoader.clear();
         jsLoader.clear();
     }
+
     String miTV(String url) {
         if (url.startsWith("p") || url.startsWith("mitv")) {
-
         }
         return url;
     }
-
 }

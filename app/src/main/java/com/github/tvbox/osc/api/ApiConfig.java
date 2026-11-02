@@ -360,6 +360,7 @@ public class ApiConfig {
 //        pyLoader.setConfig(jsonStr);
         JsonObject infoJson = new Gson().fromJson(jsonStr, JsonObject.class);
         jarCache = DefaultConfig.safeJsonString(infoJson, "jarCache", "true");
+		Hawk.put("jar_cache", jarCache);  // 持久化到 Hawk，解决时序问题
         // spider
         spider = DefaultConfig.safeJsonString(infoJson, "spider", "");
         // wallpaper

@@ -133,6 +133,8 @@ public class HomeActivity extends BaseActivity {
     }
 
     boolean useCacheConfig = false;
+    // 后台刷新标记，用于提示
+    private boolean isBackgroundRefreshing = false;
 
     @Override
     protected void init() {
@@ -208,8 +210,6 @@ public class HomeActivity extends BaseActivity {
                     textView.getPaint().setFakeBoldText(true);
                     textView.setTextColor(HomeActivity.this.getResources().getColor(R.color.color_FFFFFF));
                     textView.invalidate();
-//                    if (!sortAdapter.getItem(position).filters.isEmpty())
-//                        view.findViewById(R.id.tvFilter).setVisibility(View.VISIBLE);
                     if (position == -1) {
                         position = 0;
                         HomeActivity.this.mGridView.setSelection(0);
@@ -361,7 +361,6 @@ public class HomeActivity extends BaseActivity {
             }
         });
         setLoadSir(this.contentLayout);
-        //mHandler.postDelayed(mFindFocus, 250);
     }
     //站点切换
     public static void homeRecf() {
@@ -390,6 +389,7 @@ public class HomeActivity extends BaseActivity {
             public void onChanged(AbsSortXml absXml) {
                 if (skipNextUpdate) {
                     skipNextUpdate = false;
+                    isBackgroundRefreshing = false;
                     return;
                 }
                 showSuccess();
@@ -409,6 +409,7 @@ public class HomeActivity extends BaseActivity {
                         tvName.setText(home.getName());
                     }
                 }
+                isBackgroundRefreshing = false;
             }
         });
     }
@@ -512,7 +513,7 @@ ApiConfig.get().loadConfig(useCacheConfig, new ApiConfig.LoadConfigCallback() {
 
     @Override
     public void retry() {
-        mHandler.post(() -> initData());
+        // 空实现，防止递归，新版ApiConfig不再走retry
     }
 
     @Override
@@ -527,13 +528,12 @@ ApiConfig.get().loadConfig(useCacheConfig, new ApiConfig.LoadConfigCallback() {
             mHandler.postDelayed(() -> initData(), 50);
         } else {
             // 第二次：后台远端更新成功，静默刷新，不闪屏
-            // 只有当前首页已经加载完成了，才静默刷新分类数据
             if (dataInitOk && jarInitOk) {
                 mHandler.post(() -> {
-                    // 静默刷新：不显示 loading，直接更新数据
+                    isBackgroundRefreshing = true;
                     String currentKey = ApiConfig.get().getHomeSourceBean().getKey();
                     sourceViewModel.getSort(currentKey);
-                    // 可选：短暂 Toast 提示配置已更新
+                    // 可选提示：取消注释开启小字提示
                     // Toast.makeText(HomeActivity.this, "配置已更新", Toast.LENGTH_SHORT).show();
                 });
             }
@@ -597,6 +597,8 @@ ApiConfig.get().loadConfig(useCacheConfig, new ApiConfig.LoadConfigCallback() {
     }
 
     private void initViewPager(AbsSortXml absXml) {
+        // ✅ 关键修复：每次先清空，防止Fragment叠加堆积
+        fragments.clear();
         if (sortAdapter.getData().size() > 0) {
             for (MovieSort.SortData data : sortAdapter.getData()) {
                 if (data.id.equals("my0")) {
@@ -733,7 +735,6 @@ ApiConfig.get().loadConfig(useCacheConfig, new ApiConfig.LoadConfigCallback() {
             }
         } else if (event.type == RefreshEvent.TYPE_FILTER_CHANGE) {
             if (currentView != null) {
-//                showFilterIcon((int) event.obj);
             }
         }
     }
@@ -767,11 +768,6 @@ ApiConfig.get().loadConfig(useCacheConfig, new ApiConfig.LoadConfigCallback() {
             if (event.getKeyCode() == KeyEvent.KEYCODE_MENU) {
                 showSiteSwitch();
             }
-//            if (event.getKeyCode() == KeyEvent.KEYCODE_DPAD_DOWN) {
-//                if () {
-//
-//                }
-//            }
         } else if (event.getAction() == KeyEvent.ACTION_UP) {
 
         }
@@ -890,7 +886,6 @@ ApiConfig.get().loadConfig(useCacheConfig, new ApiConfig.LoadConfigCallback() {
                 public boolean areItemsTheSame(@NonNull @NotNull SourceBean oldItem, @NonNull @NotNull SourceBean newItem) {
                     return oldItem == newItem;
                 }
-
                 @Override
                 public boolean areContentsTheSame(@NonNull @NotNull SourceBean oldItem, @NonNull @NotNull SourceBean newItem) {
                     return oldItem.getKey().equals(newItem.getKey());
@@ -899,14 +894,6 @@ ApiConfig.get().loadConfig(useCacheConfig, new ApiConfig.LoadConfigCallback() {
             dialog.setOnDismissListener(new DialogInterface.OnDismissListener() {
                 @Override
                 public void onDismiss(DialogInterface dialog) {
-//                    if (homeSourceKey != null && !homeSourceKey.equals(Hawk.get(HawkConfig.HOME_API, ""))) {
-//                        Intent intent = new Intent(getApplicationContext(), HomeActivity.class);
-//                        intent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK);
-//                        Bundle bundle = new Bundle();
-//                        bundle.putBoolean("useCache", true);
-//                        intent.putExtras(bundle);
-//                        HomeActivity.this.startActivity(intent);
-//                    }
                 }
             });
             dialog.show();
@@ -939,13 +926,4 @@ ApiConfig.get().loadConfig(useCacheConfig, new ApiConfig.LoadConfigCallback() {
         blinkAnimation.setRepeatCount(Animation.INFINITE);
         tvName.startAnimation(blinkAnimation);
     }
-//    public void onClick(View v) {
-//        FastClickCheckUtil.check(v);
-//        if (v.getId() == R.id.tvFind) {
-//            jumpActivity(SearchActivity.class);
-//        } else if (v.getId() == R.id.tvMenu) {
-//            jumpActivity(SettingActivity.class);
-//        }
-//    }
-
 }

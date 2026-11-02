@@ -506,111 +506,94 @@ public class HomeActivity extends BaseActivity {
             return;
         }
         // ========== 核心修改块 start ==========
-        ApiConfig.get().loadConfig(useCacheConfig, new ApiConfig.LoadConfigCallback() {
-            TipDialog dialog = null;
-            boolean isFirstLoad = true;
+ApiConfig.get().loadConfig(useCacheConfig, new ApiConfig.LoadConfigCallback() {
+    TipDialog dialog = null;
+    boolean isFirstLoad = true;
 
-            @Override
-            public void retry() {
-                mHandler.post(new Runnable() {
-                    @Override
-                    public void run() {
-                        initData();
-                    }
+    @Override
+    public void retry() {
+        mHandler.post(() -> initData());
+    }
+
+    @Override
+    public void success() {
+        if (isFirstLoad) {
+            // 第一次：缓存加载，走完整初始化流程
+            isFirstLoad = false;
+            dataInitOk = true;
+            if (ApiConfig.get().getSpider().isEmpty()) {
+                jarInitOk = true;
+            }
+            mHandler.postDelayed(() -> initData(), 50);
+        } else {
+            // 第二次：后台远端更新成功，静默刷新，不闪屏
+            // 只有当前首页已经加载完成了，才静默刷新分类数据
+            if (dataInitOk && jarInitOk) {
+                mHandler.post(() -> {
+                    // 静默刷新：不显示 loading，直接更新数据
+                    String currentKey = ApiConfig.get().getHomeSourceBean().getKey();
+                    sourceViewModel.getSort(currentKey);
+                    // 可选：短暂 Toast 提示配置已更新
+                    // Toast.makeText(HomeActivity.this, "配置已更新", Toast.LENGTH_SHORT).show();
                 });
             }
+        }
+    }
 
-            @Override
-            public void success() {
-                if (isFirstLoad) {
-                    // 第一次：缓存加载，走完整初始化流程
-                    isFirstLoad = false;
-                    dataInitOk = true;
-                    if (ApiConfig.get().getSpider().isEmpty()) {
-                        jarInitOk = true;
-                    }
-                    mHandler.postDelayed(new Runnable() {
-                        @Override
-                        public void run() {
-                            initData();
-                        }
-                    }, 50);
-                } else {
-                    // 第二次：后台远端更新成功，静默刷新，不递归initData
-                    mHandler.post(() -> {
-                        sourceViewModel.getSort(ApiConfig.get().getHomeSourceBean().getKey());
-                        // 可选：提示配置更新
-                        // Toast.makeText(HomeActivity.this, "配置已更新", Toast.LENGTH_SHORT).show();
-                    });
-                }
-            }
+    @Override
+    public void error(String msg) {
+        if (msg.equalsIgnoreCase("-1")) {
+            mHandler.post(() -> {
+                dataInitOk = true;
+                jarInitOk = true;
+                tvName.clearAnimation();
+                initData();
+            });
+            return;
+        }
+        // 只有首次加载才弹出错误弹窗，后台网络失败静默忽略
+        if (isFirstLoad) {
+            mHandler.post(() -> {
+                if (dialog == null)
+                    dialog = new TipDialog(HomeActivity.this, msg,
+                            getString(R.string.hm_retry),
+                            getString(R.string.hm_cancel),
+                            new TipDialog.OnListener() {
+                                @Override
+                                public void left() {
+                                    mHandler.post(() -> {
+                                        initData();
+                                        dialog.hide();
+                                    });
+                                }
 
-            @Override
-            public void error(String msg) {
-                if (msg.equalsIgnoreCase("-1")) {
-                    mHandler.post(new Runnable() {
-                        @Override
-                        public void run() {
-                            dataInitOk = true;
-                            jarInitOk = true;
-                            tvName.clearAnimation(); // 异常兜底停止闪烁
-                            initData();
-                        }
-                    });
-                    return;
-                }
-                // 只有首次加载才弹出错误弹窗，后台网络失败静默忽略
-                if(isFirstLoad) {
-                    mHandler.post(new Runnable() {
-                        @Override
-                        public void run() {
-                            if (dialog == null)
-                                dialog = new TipDialog(HomeActivity.this, msg, getString(R.string.hm_retry), getString(R.string.hm_cancel), new TipDialog.OnListener() {
-                                    @Override
-                                    public void left() {
-                                        mHandler.post(new Runnable() {
-                                            @Override
-                                            public void run() {
-                                                initData();
-                                                dialog.hide();
-                                            }
-                                        });
-                                    }
+                                @Override
+                                public void right() {
+                                    dataInitOk = true;
+                                    jarInitOk = true;
+                                    mHandler.post(() -> {
+                                        initData();
+                                        dialog.hide();
+                                    });
+                                }
 
-                                    @Override
-                                    public void right() {
-                                        dataInitOk = true;
-                                        jarInitOk = true;
-                                        mHandler.post(new Runnable() {
-                                            @Override
-                                            public void run() {
-                                                initData();
-                                                dialog.hide();
-                                            }
-                                        });
-                                    }
-
-                                    @Override
-                                    public void cancel() {
-                                        dataInitOk = true;
-                                        jarInitOk = true;
-                                        mHandler.post(new Runnable() {
-                                            @Override
-                                            public void run() {
-                                                initData();
-                                                dialog.hide();
-                                            }
-                                        });
-                                    }
-                                });
-                            if (!dialog.isShowing())
-                                dialog.show();
-                        }
-                    });
-                }
-            }
-        }, this);
-        // ========== 核心修改块 end ==========
+                                @Override
+                                public void cancel() {
+                                    dataInitOk = true;
+                                    jarInitOk = true;
+                                    mHandler.post(() -> {
+                                        initData();
+                                        dialog.hide();
+                                    });
+                                }
+                            });
+                if (!dialog.isShowing())
+                    dialog.show();
+            });
+        }
+    }
+}, this);
+// ========== 核心修改块 end ==========
     }
 
     private void initViewPager(AbsSortXml absXml) {

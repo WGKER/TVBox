@@ -138,39 +138,49 @@ public class ApiConfig {
     }
 
     public void loadConfig(boolean useCache, LoadConfigCallback callback, Activity activity) {
-        // Embedded Source : Update in Strings.xml if required
-        String apiUrl = Hawk.get(HawkConfig.API_URL, HomeActivity.getRes().getString(R.string.app_source));
-        if (apiUrl.isEmpty()) {
-            callback.error("源地址为空");
-            return;
+    String apiUrl = Hawk.get(HawkConfig.API_URL, HomeActivity.getRes().getString(R.string.app_source));
+    if (apiUrl.isEmpty()) {
+        callback.error("源地址为空");
+        return;
+    }
+    File cache = new File(App.getInstance().getFilesDir().getAbsolutePath() + "/" + MD5.encode(apiUrl));
+    final String finalApiUrl = apiUrl;
+
+    // ========== 第一步：优先读取本地缓存，立刻回调首页渲染（和FongMi对齐） ==========
+    boolean cacheAvailable = false;
+    if (cache.exists()) {
+        try {
+            parseJson(finalApiUrl, cache);
+            callback.success();
+            cacheAvailable = true;
+        } catch (Throwable th) {
+            th.printStackTrace();
         }
-        File cache = new File(App.getInstance().getFilesDir().getAbsolutePath() + "/" + MD5.encode(apiUrl));
-        if (useCache && cache.exists()) {
-            try {
-                parseJson(apiUrl, cache);
-                callback.success();
-                return;
-            } catch (Throwable th) {
-                th.printStackTrace();
-            }
-        }
+    }
+    // 如果连缓存都没有，先报错，再尝试网络拉取
+    if (!cacheAvailable) {
+        callback.retry();
+    }
+
+    // ========== 第二步：后台异步拉取远端最新配置，不阻塞首页 ==========
+    new Thread(() -> {
         String TempKey = null, configUrl = "", pk = ";pk;";
-        if (apiUrl.contains(pk)) {
-            String[] a = apiUrl.split(pk);
+        if (finalApiUrl.contains(pk)) {
+            String[] a = finalApiUrl.split(pk);
             TempKey = a[1];
-            if (apiUrl.startsWith("clan")) {
+            if (finalApiUrl.startsWith("clan")) {
                 configUrl = clanToAddress(a[0]);
-            } else if (apiUrl.startsWith("http")) {
+            } else if (finalApiUrl.startsWith("http")) {
                 configUrl = a[0];
             } else {
                 configUrl = "http://" + a[0];
             }
-        } else if (apiUrl.startsWith("clan")) {
-            configUrl = clanToAddress(apiUrl);
-        } else if (!apiUrl.startsWith("http")) {
-            configUrl = "http://" + configUrl;
+        } else if (finalApiUrl.startsWith("clan")) {
+            configUrl = clanToAddress(finalApiUrl);
+        } else if (!finalApiUrl.startsWith("http")) {
+            configUrl = "http://" + finalApiUrl;
         } else {
-            configUrl = apiUrl;
+            configUrl = finalApiUrl;
         }
         System.out.println("API URL :" + configUrl);
         String configKey = TempKey;
@@ -182,7 +192,8 @@ public class ApiConfig {
                     public void onSuccess(Response<String> response) {
                         try {
                             String json = response.body();
-                            parseJson(apiUrl, json);
+                            parseJson(finalApiUrl, json);
+                            // 更新缓存文件
                             try {
                                 File cacheDir = cache.getParentFile();
                                 if (!cacheDir.exists())
@@ -196,26 +207,17 @@ public class ApiConfig {
                             } catch (Throwable th) {
                                 th.printStackTrace();
                             }
-                            callback.success();
+                            // 远端更新成功，通知首页刷新一次
+                            activity.runOnUiThread(callback::success);
                         } catch (Throwable th) {
                             th.printStackTrace();
-                            callback.error("解析配置失败");
                         }
                     }
 
                     @Override
                     public void onError(Response<String> response) {
                         super.onError(response);
-                        if (cache.exists()) {
-                            try {
-                                parseJson(apiUrl, cache);
-                                callback.success();
-                                return;
-                            } catch (Throwable th) {
-                                th.printStackTrace();
-                            }
-                        }
-                        callback.error("拉取配置失败\n" + (response.getException() != null ? response.getException().getMessage() : ""));
+                        // 网络失败静默放弃，不弹窗打扰用户（已经有缓存显示了）
                     }
 
                     public String convertResponse(okhttp3.Response response) throws Throwable {
@@ -225,14 +227,15 @@ public class ApiConfig {
                         } else {
                             result = FindResult(response.body().string(), configKey);
                         }
-                        if (apiUrl.startsWith("clan")) {
-                            result = clanContentFix(clanToAddress(apiUrl), result);
+                        if (finalApiUrl.startsWith("clan")) {
+                            result = clanContentFix(clanToAddress(finalApiUrl), result);
                         }
-                        result = fixContentPath(apiUrl, result);
+                        result = fixContentPath(finalApiUrl, result);
                         return result;
                     }
                 });
-    }
+    }).start();
+}
 
     public void loadJar(boolean useCache, String spider, LoadConfigCallback callback) {
         String[] urls = spider.split(";md5;");

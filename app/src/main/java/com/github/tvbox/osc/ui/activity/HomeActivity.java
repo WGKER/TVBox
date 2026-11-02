@@ -120,7 +120,7 @@ public class HomeActivity extends BaseActivity {
         public void run() {
             Date date = new Date();
             @SuppressLint("SimpleDateFormat")
-			//修改时间分隔符
+            //修改时间分隔符
             SimpleDateFormat timeFormat = new SimpleDateFormat(getString(R.string.hm_date1) + " | " + getString(R.string.hm_date2));
             tvDate.setText(timeFormat.format(date));
             mHandler.postDelayed(this, 1000);
@@ -371,7 +371,7 @@ public class HomeActivity extends BaseActivity {
         homeRec++;
         Hawk.put(HawkConfig.HOME_REC, homeRec);
     }
-    
+
     public static boolean reHome(Context appContext) {
         Intent intent = new Intent(appContext, HomeActivity.class);
         intent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK);
@@ -382,7 +382,7 @@ public class HomeActivity extends BaseActivity {
         return true;
     }
 
-    private boolean skipNextUpdate = false;	
+    private boolean skipNextUpdate = false;
     private void initViewModel() {
         sourceViewModel = new ViewModelProvider(this).get(SourceViewModel.class);
         sourceViewModel.sortResult.observe(this, new Observer<AbsSortXml>() {
@@ -458,7 +458,7 @@ public class HomeActivity extends BaseActivity {
             }
             if (Hawk.get(HawkConfig.HOME_DEFAULT_SHOW, false)) {
                 jumpActivity(LivePlayActivity.class);
-            }         
+            }
             return;
         }
         tvNameAnimation();
@@ -505,8 +505,10 @@ public class HomeActivity extends BaseActivity {
             }
             return;
         }
+        // ========== 核心修改块 start ==========
         ApiConfig.get().loadConfig(useCacheConfig, new ApiConfig.LoadConfigCallback() {
             TipDialog dialog = null;
+            boolean isFirstLoad = true;
 
             @Override
             public void retry() {
@@ -520,16 +522,27 @@ public class HomeActivity extends BaseActivity {
 
             @Override
             public void success() {
-                dataInitOk = true;
-                if (ApiConfig.get().getSpider().isEmpty()) {
-                    jarInitOk = true;
-                }
-                mHandler.postDelayed(new Runnable() {
-                    @Override
-                    public void run() {
-                        initData();
+                if (isFirstLoad) {
+                    // 第一次：缓存加载，走完整初始化流程
+                    isFirstLoad = false;
+                    dataInitOk = true;
+                    if (ApiConfig.get().getSpider().isEmpty()) {
+                        jarInitOk = true;
                     }
-                }, 50);
+                    mHandler.postDelayed(new Runnable() {
+                        @Override
+                        public void run() {
+                            initData();
+                        }
+                    }, 50);
+                } else {
+                    // 第二次：后台远端更新成功，静默刷新，不递归initData
+                    mHandler.post(() -> {
+                        sourceViewModel.getSort(ApiConfig.get().getHomeSourceBean().getKey());
+                        // 可选：提示配置更新
+                        // Toast.makeText(HomeActivity.this, "配置已更新", Toast.LENGTH_SHORT).show();
+                    });
+                }
             }
 
             @Override
@@ -546,54 +559,58 @@ public class HomeActivity extends BaseActivity {
                     });
                     return;
                 }
-                mHandler.post(new Runnable() {
-                    @Override
-                    public void run() {
-                        if (dialog == null)
-                            dialog = new TipDialog(HomeActivity.this, msg, getString(R.string.hm_retry), getString(R.string.hm_cancel), new TipDialog.OnListener() {
-                                @Override
-                                public void left() {
-                                    mHandler.post(new Runnable() {
-                                        @Override
-                                        public void run() {
-                                            initData();
-                                            dialog.hide();
-                                        }
-                                    });
-                                }
+                // 只有首次加载才弹出错误弹窗，后台网络失败静默忽略
+                if(isFirstLoad) {
+                    mHandler.post(new Runnable() {
+                        @Override
+                        public void run() {
+                            if (dialog == null)
+                                dialog = new TipDialog(HomeActivity.this, msg, getString(R.string.hm_retry), getString(R.string.hm_cancel), new TipDialog.OnListener() {
+                                    @Override
+                                    public void left() {
+                                        mHandler.post(new Runnable() {
+                                            @Override
+                                            public void run() {
+                                                initData();
+                                                dialog.hide();
+                                            }
+                                        });
+                                    }
 
-                                @Override
-                                public void right() {
-                                    dataInitOk = true;
-                                    jarInitOk = true;
-                                    mHandler.post(new Runnable() {
-                                        @Override
-                                        public void run() {
-                                            initData();
-                                            dialog.hide();
-                                        }
-                                    });
-                                }
+                                    @Override
+                                    public void right() {
+                                        dataInitOk = true;
+                                        jarInitOk = true;
+                                        mHandler.post(new Runnable() {
+                                            @Override
+                                            public void run() {
+                                                initData();
+                                                dialog.hide();
+                                            }
+                                        });
+                                    }
 
-                                @Override
-                                public void cancel() {
-                                    dataInitOk = true;
-                                    jarInitOk = true;
-                                    mHandler.post(new Runnable() {
-                                        @Override
-                                        public void run() {
-                                            initData();
-                                            dialog.hide();
-                                        }
-                                    });
-                                }
-                            });
-                        if (!dialog.isShowing())
-                            dialog.show();
-                    }
-                });
+                                    @Override
+                                    public void cancel() {
+                                        dataInitOk = true;
+                                        jarInitOk = true;
+                                        mHandler.post(new Runnable() {
+                                            @Override
+                                            public void run() {
+                                                initData();
+                                                dialog.hide();
+                                            }
+                                        });
+                                    }
+                                });
+                            if (!dialog.isShowing())
+                                dialog.show();
+                        }
+                    });
+                }
             }
         }, this);
+        // ========== 核心修改块 end ==========
     }
 
     private void initViewPager(AbsSortXml absXml) {
@@ -707,7 +724,7 @@ public class HomeActivity extends BaseActivity {
         } else {
             tvFind.setVisibility(View.GONE);
         }
-        if (Hawk.get(HawkConfig.HOME_MENU_POSITION, true)) {
+        if (Hawk.get(HOME_MENU_POSITION, true)) {
             tvMenu.setVisibility(View.VISIBLE);
         } else {
             tvMenu.setVisibility(View.GONE);

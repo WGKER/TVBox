@@ -244,101 +244,104 @@ public class ApiConfig {
 }
 
     public void loadJar(boolean useCache, String spider, LoadConfigCallback callback) {
-        String[] urls = spider.split(";md5;");
-        String jarUrl = urls[0];
-        String md5 = urls.length > 1 ? urls[1].trim() : "";
-        File cache = new File(App.getInstance().getFilesDir().getAbsolutePath() + "/csp/"+MD5.string2MD5(jarUrl)+".jar");
-        if (!md5.isEmpty() || useCache) {
-            if (cache.exists() && (useCache || MD5.getFileMd5(cache).equalsIgnoreCase(md5))) {
-                if (jarLoader.load(cache.getAbsolutePath())) {
-                    callback.success();
-                } else {
-                    callback.error("从缓存加载jar失败");
-                }
+    String[] urls = spider.split(";md5;");
+    String jarUrl = urls[0];
+    String md5 = urls.length > 1 ? urls[1].trim() : "";
+    File cache = new File(App.getInstance().getFilesDir().getAbsolutePath() + "/csp/" + MD5.string2MD5(jarUrl) + ".jar");
+
+    // 从 Hawk 读取 jarCache 开关（parseJson 时持久化到 Hawk，解决时序问题）
+    String jarCacheSetting = Hawk.get("jar_cache", "true");
+
+    if (!md5.isEmpty() || useCache) {
+        if (cache.exists() && (useCache || MD5.getFileMd5(cache).equalsIgnoreCase(md5))) {
+            if (jarLoader.load(cache.getAbsolutePath())) {
+                callback.success();
+            } else {
+                callback.error("从缓存加载jar失败");
+            }
+            return;
+        }
+    } else {
+        // 用 Hawk 里持久化的 jarCache 配置，不再依赖内存里的静态变量
+        if (Boolean.parseBoolean(jarCacheSetting) && cache.exists() && !FileUtils.isWeekAgo(cache)) {
+            if (jarLoader.load(cache.getAbsolutePath())) {
+                callback.success();
                 return;
             }
-        }else {
-            if (Boolean.parseBoolean(jarCache) && cache.exists() && !FileUtils.isWeekAgo(cache)) {
-                if (jarLoader.load(cache.getAbsolutePath())) {
-                    callback.success();
-                    return;
-                }
-            }
         }
-
-        boolean isJarInImg = jarUrl.startsWith("img+");
-        jarUrl = jarUrl.replace("img+", "");
-        OkGo.<File>get(jarUrl)
-                .headers("User-Agent", userAgent)
-                .headers("Accept", requestAccept)
-                .execute(new AbsCallback<File>() {
-
-                    @Override
-                    public File convertResponse(okhttp3.Response response){
-                        File cacheDir = cache.getParentFile();
-                        assert cacheDir != null;
-                        if (!cacheDir.exists()) cacheDir.mkdirs();
-                        if (cache.exists()) cache.delete();
-                        // 3. 使用 try-with-resources 确保流关闭
-                        assert response.body() != null;
-                        try (FileOutputStream fos = new FileOutputStream(cache)) {
-                            if (isJarInImg) {
-                                String respData = response.body().string();
-                                LOG.i("echo---jar Response: " + respData);
-                                byte[] imgJar = getImgJar(respData);
-                                if (imgJar == null || imgJar.length == 0) {
-                                    LOG.e("echo---Generated JAR data is empty");
-                                    callback.error("JAR data is empty");
-                                }
-                                fos.write(imgJar);
-                            } else {
-                                // 使用流式传输避免内存溢出
-                                InputStream inputStream = response.body().byteStream();
-                                byte[] buffer = new byte[4096];
-                                int bytesRead;
-                                while ((bytesRead = inputStream.read(buffer)) != -1) {
-                                    fos.write(buffer, 0, bytesRead);
-                                }
-                            }
-                            fos.flush();
-                        } catch (IOException e) {
-                            return null;
-                        }
-                        return cache;
-                    }
-
-                    @Override
-                    public void onSuccess(Response<File> response) {
-                        File file = response.body();
-                        if (file != null && file.exists()) {
-                            try {
-                                if (jarLoader.load(file.getAbsolutePath())) {
-                                    callback.success();
-                                } else {
-                                    LOG.e("echo---jar Loader returned false");
-                                    callback.error("从网络上加载jar写入缓存后加载失败");
-                                }
-                            } catch (Exception e) {
-                                LOG.e("echo---jar Loader threw exception: " + e.getMessage());
-                                callback.error("JAR加载异常: " + e.getMessage());
-                            }
-                        } else {
-                            LOG.e("echo---jar File not found");
-                            callback.error("从网络上加载jar地址字节数据为空");
-                        }
-                    }
-
-                    @Override
-                    public void onError(Response<File> response) {
-                        Throwable ex = response.getException();
-                        if (ex != null) {
-                            LOG.i("echo---jar Request failed: " + ex.getMessage());
-                        }
-                        if(cache.exists())jarLoader.load(cache.getAbsolutePath());
-                        callback.error(ex != null ? "从网络上加载jar失败：" + ex.getMessage() : "未知网络错误");
-                    }
-                });
     }
+
+    boolean isJarInImg = jarUrl.startsWith("img+");
+    jarUrl = jarUrl.replace("img+", "");
+    OkGo.<File>get(jarUrl)
+            .headers("User-Agent", userAgent)
+            .headers("Accept", requestAccept)
+            .execute(new AbsCallback<File>() {
+
+                @Override
+                public File convertResponse(okhttp3.Response response) {
+                    File cacheDir = cache.getParentFile();
+                    assert cacheDir != null;
+                    if (!cacheDir.exists()) cacheDir.mkdirs();
+                    if (cache.exists()) cache.delete();
+                    assert response.body() != null;
+                    try (FileOutputStream fos = new FileOutputStream(cache)) {
+                        if (isJarInImg) {
+                            String respData = response.body().string();
+                            LOG.i("echo---jar Response: " + respData);
+                            byte[] imgJar = getImgJar(respData);
+                            if (imgJar == null || imgJar.length == 0) {
+                                LOG.e("echo---Generated JAR data is empty");
+                                callback.error("JAR data is empty");
+                            }
+                            fos.write(imgJar);
+                        } else {
+                            InputStream inputStream = response.body().byteStream();
+                            byte[] buffer = new byte[4096];
+                            int bytesRead;
+                            while ((bytesRead = inputStream.read(buffer)) != -1) {
+                                fos.write(buffer, 0, bytesRead);
+                            }
+                        }
+                        fos.flush();
+                    } catch (IOException e) {
+                        return null;
+                    }
+                    return cache;
+                }
+
+                @Override
+                public void onSuccess(Response<File> response) {
+                    File file = response.body();
+                    if (file != null && file.exists()) {
+                        try {
+                            if (jarLoader.load(file.getAbsolutePath())) {
+                                callback.success();
+                            } else {
+                                LOG.e("echo---jar Loader returned false");
+                                callback.error("从网络上加载jar写入缓存后加载失败");
+                            }
+                        } catch (Exception e) {
+                            LOG.e("echo---jar Loader threw exception: " + e.getMessage());
+                            callback.error("JAR加载异常: " + e.getMessage());
+                        }
+                    } else {
+                        LOG.e("echo---jar File not found");
+                        callback.error("从网络上加载jar地址字节数据为空");
+                    }
+                }
+
+                @Override
+                public void onError(Response<File> response) {
+                    Throwable ex = response.getException();
+                    if (ex != null) {
+                        LOG.i("echo---jar Request failed: " + ex.getMessage());
+                    }
+                    if (cache.exists()) jarLoader.load(cache.getAbsolutePath());
+                    callback.error(ex != null ? "从网络上加载jar失败：" + ex.getMessage() : "未知网络错误");
+                }
+            });
+}
 
     private void parseJson(String apiUrl, File f) throws Throwable {
         System.out.println("从本地缓存加载" + f.getAbsolutePath());
